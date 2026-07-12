@@ -21,15 +21,19 @@ Ethereum wallet data uses a provider manager with the following behavior:
 
 - Alchemy is the primary provider and is retried once on failure.
 - Etherscan is used automatically if Alchemy remains unavailable.
+- A keyless public Ethereum RPC supplies native ETH balances when no API key is configured.
 - Successful wallet responses are cached in memory for 60 seconds.
 - Concurrent requests for the same wallet share one provider request.
 
-Configure at least one provider in `.env`:
+Optionally configure a provider in `.env` for complete portfolio data:
 
 ```env
 ALCHEMY_API_KEY=your_alchemy_api_key
 ETHERSCAN_API_KEY=your_etherscan_api_key
 ```
+
+API keys are optional. The public RPC fallback returns real native ETH only; it
+cannot enumerate ERC-20 holdings or provide USD values.
 
 ## Stack
 

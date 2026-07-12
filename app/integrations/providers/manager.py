@@ -12,7 +12,7 @@ from typing import Protocol
 
 from app.integrations.blockchain.models import WalletSnapshot
 from app.integrations.providers import ProviderError, ProviderNotConfigured
-from app.integrations.providers import alchemy, etherscan
+from app.integrations.providers import alchemy, etherscan, public_rpc
 
 CACHE_TTL_SECONDS = 60
 PRIMARY_PROVIDER_RETRY_ATTEMPTS = 2
@@ -124,8 +124,8 @@ class ProviderManager:
 
         if not configured_provider_found:
             raise ProviderManagerError(
-                "Wallet providers are not configured. "
-                "Set ALCHEMY_API_KEY or ETHERSCAN_API_KEY."
+                "Unable to retrieve wallet data from the public Ethereum RPC. "
+                "Optionally configure ALCHEMY_API_KEY or ETHERSCAN_API_KEY."
             )
         raise ProviderManagerError(
             "Unable to retrieve wallet data. Please try again in a few moments."
@@ -141,4 +141,4 @@ class ProviderManager:
         return replace(snapshot, updated_at=datetime.now(timezone.utc))
 
 
-ethereum_provider_manager = ProviderManager((alchemy, etherscan))
+ethereum_provider_manager = ProviderManager((alchemy, etherscan, public_rpc))

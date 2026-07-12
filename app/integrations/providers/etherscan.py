@@ -5,10 +5,12 @@ from __future__ import annotations
 import json
 import logging
 import os
+import ssl
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
 import aiohttp
+import certifi
 
 from app.integrations.blockchain.models import WalletAsset, WalletSnapshot
 from app.integrations.providers import ProviderError, ProviderNotConfigured
@@ -41,9 +43,10 @@ async def get_wallet(address: str) -> WalletSnapshot:
         "apikey": api_key,
     }
     timeout = aiohttp.ClientTimeout(total=REQUEST_TIMEOUT_SECONDS)
+    ssl_context = ssl.create_default_context(cafile=certifi.where())
     try:
         async with aiohttp.ClientSession(timeout=timeout) as session:
-            data = await _get_json(session, params)
+            data = await _get_json(session, params, ssl_context)
     except (aiohttp.ClientError, TimeoutError, ValueError) as exc:
         logger.exception("Etherscan request raised an exception")
         raise ProviderError("Etherscan request failed") from exc
@@ -72,10 +75,12 @@ async def get_wallet(address: str) -> WalletSnapshot:
 
 
 async def _get_json(
-    session: aiohttp.ClientSession, params: dict[str, str]
+    session: aiohttp.ClientSession,
+    params: dict[str, str],
+    ssl_context: ssl.SSLContext,
 ) -> dict[str, Any] | list[Any]:
     logger.info("Calling Etherscan...")
-    async with session.get(API_URL, params=params) as response:
+    async with session.get(API_URL, params=params, ssl=ssl_context) as response:
         response_body = await response.text()
         logger.info("Etherscan HTTP Status: %d", response.status)
         logger.info("Etherscan Response: %s", response_body)

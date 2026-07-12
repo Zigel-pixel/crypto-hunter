@@ -6,10 +6,12 @@ import asyncio
 import json
 import logging
 import os
+import ssl
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
 import aiohttp
+import certifi
 
 from app.integrations.blockchain.models import WalletAsset, WalletSnapshot
 from app.integrations.providers import ProviderError, ProviderNotConfigured
@@ -36,8 +38,10 @@ async def get_wallet(address: str) -> WalletSnapshot:
 
     url = API_URL.format(api_key=api_key)
     timeout = aiohttp.ClientTimeout(total=REQUEST_TIMEOUT_SECONDS)
+    ssl_context = ssl.create_default_context(cafile=certifi.where())
     try:
-        async with aiohttp.ClientSession(timeout=timeout) as session:
+        connector = aiohttp.TCPConnector(ssl=ssl_context)
+        async with aiohttp.ClientSession(timeout=timeout, connector=connector) as session:
             native_raw, token_data = await asyncio.gather(
                 _rpc(session, url, "eth_getBalance", [address, "latest"]),
                 _rpc(session, url, "alchemy_getTokenBalances", [address]),
