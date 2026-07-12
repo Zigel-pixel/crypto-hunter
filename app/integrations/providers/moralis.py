@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import logging
 import math
 import os
 from decimal import Decimal, InvalidOperation
@@ -21,12 +23,17 @@ WALLET_TOKENS_URL = "https://api.moralis.com/v1/wallets/{address}/tokens"
 WEI_DECIMALS = 18
 REQUEST_TIMEOUT_SECONDS = 20
 
+logger = logging.getLogger(__name__)
+
 
 async def get_wallet(address: str) -> WalletSnapshot:
     """Return real native ETH and ERC-20 balances from Moralis."""
+    logger.info("Loading Moralis API key...")
     api_key = os.getenv(API_KEY_ENV, "").strip()
     if not api_key:
-        raise ProviderNotConfigured("Moralis API key is not configured")
+        logger.error("Moralis API key is missing.")
+        raise ProviderNotConfigured("Moralis API key is missing.")
+    logger.info("Moralis API key loaded.")
 
     headers = {"X-API-Key": api_key}
     timeout = aiohttp.ClientTimeout(total=REQUEST_TIMEOUT_SECONDS)
@@ -44,6 +51,7 @@ async def get_wallet(address: str) -> WalletSnapshot:
                 ),
             )
     except (aiohttp.ClientError, TimeoutError, ValueError) as exc:
+        logger.exception("Moralis request raised an exception")
         raise ProviderError("Moralis request failed") from exc
 
     if not isinstance(native_data, dict):
@@ -83,10 +91,20 @@ async def _get_json(
     headers: dict[str, str],
     params: dict[str, str],
 ) -> dict[str, Any] | list[Any]:
+    logger.info("Calling Moralis...")
     async with session.get(url, headers=headers, params=params) as response:
+        response_body = await response.text()
+        logger.info("Moralis HTTP Status: %d", response.status)
+        logger.info("Moralis Response: %s", response_body)
+        if response.status == 401:
+            logger.error("Moralis authentication failed.")
+            raise ProviderError("Moralis authentication failed.")
         if response.status >= 400:
             raise ProviderError(f"Moralis returned HTTP {response.status}")
-        data = await response.json()
+    try:
+        data = json.loads(response_body)
+    except json.JSONDecodeError as exc:
+        raise ProviderError("Moralis returned invalid JSON") from exc
     if not isinstance(data, (dict, list)):
         raise ProviderError("Moralis returned an invalid response")
     return data

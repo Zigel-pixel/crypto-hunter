@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import logging
 import os
 from decimal import Decimal, InvalidOperation
 from typing import Any
@@ -20,12 +22,17 @@ WEI_DECIMALS = 18
 REQUEST_TIMEOUT_SECONDS = 20
 METADATA_CONCURRENCY = 10
 
+logger = logging.getLogger(__name__)
+
 
 async def get_wallet(address: str) -> WalletSnapshot:
     """Return real Ethereum balances from Alchemy JSON-RPC."""
+    logger.info("Loading Alchemy API key...")
     api_key = os.getenv(API_KEY_ENV, "").strip()
     if not api_key:
-        raise ProviderNotConfigured("Alchemy API key is not configured")
+        logger.error("Alchemy API key is missing.")
+        raise ProviderNotConfigured("Alchemy API key is missing.")
+    logger.info("Alchemy API key loaded.")
 
     url = API_URL.format(api_key=api_key)
     timeout = aiohttp.ClientTimeout(total=REQUEST_TIMEOUT_SECONDS)
@@ -37,6 +44,7 @@ async def get_wallet(address: str) -> WalletSnapshot:
             )
             token_assets = await _get_token_assets(session, url, token_data)
     except (aiohttp.ClientError, TimeoutError, ValueError) as exc:
+        logger.exception("Alchemy request raised an exception")
         raise ProviderError("Alchemy request failed") from exc
 
     native_amount = _to_amount(native_raw, WEI_DECIMALS, base=16)
@@ -57,10 +65,20 @@ async def _rpc(
     session: aiohttp.ClientSession, url: str, method: str, params: list[Any]
 ) -> Any:
     payload = {"jsonrpc": "2.0", "id": 1, "method": method, "params": params}
+    logger.info("Calling Alchemy: %s", method)
     async with session.post(url, json=payload) as response:
+        response_body = await response.text()
+        logger.info("Alchemy HTTP Status: %d", response.status)
+        logger.info("Alchemy Response: %s", response_body)
+        if response.status == 401:
+            logger.error("Alchemy authentication failed.")
+            raise ProviderError("Alchemy authentication failed.")
         if response.status >= 400:
             raise ProviderError(f"Alchemy returned HTTP {response.status}")
-        data = await response.json()
+    try:
+        data = json.loads(response_body)
+    except json.JSONDecodeError as exc:
+        raise ProviderError("Alchemy returned invalid JSON") from exc
     if not isinstance(data, dict) or "error" in data or "result" not in data:
         raise ProviderError("Alchemy returned an invalid response")
     return data["result"]

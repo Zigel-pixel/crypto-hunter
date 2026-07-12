@@ -83,7 +83,9 @@ class ProviderManager:
 
     async def _fetch_wallet(self, address: str) -> WalletSnapshot:
         configured_provider_found = False
-        for provider in self._providers:
+        for provider_index, provider in enumerate(self._providers):
+            provider_failed = False
+            provider_unavailable = False
             attempts = (
                 MORALIS_RETRY_ATTEMPTS
                 if provider.PROVIDER == moralis.PROVIDER
@@ -93,13 +95,32 @@ class ProviderManager:
                 try:
                     return await self._fetch_from_provider(provider, address)
                 except ProviderNotConfigured:
+                    provider_unavailable = True
+                    logger.warning("[%s] API key is missing.", provider.PROVIDER.title())
                     break
-                except ProviderError:
+                except ProviderError as exc:
                     configured_provider_found = True
-                    logger.warning("[%s] Failed", provider.PROVIDER.title())
-                except Exception:
+                    provider_failed = True
+                    logger.warning("[%s] Failed: %s", provider.PROVIDER.title(), exc)
+                except Exception as exc:
                     configured_provider_found = True
-                    logger.exception("[%s] Failed", provider.PROVIDER.title())
+                    provider_failed = True
+                    logger.exception("[%s] Failed: %s", provider.PROVIDER.title(), exc)
+
+            if provider_failed and provider_index + 1 < len(self._providers):
+                next_provider = self._providers[provider_index + 1]
+                logger.info(
+                    "%s failed. Switching to %s.",
+                    provider.PROVIDER.title(),
+                    next_provider.PROVIDER.title(),
+                )
+            elif provider_unavailable and provider_index + 1 < len(self._providers):
+                next_provider = self._providers[provider_index + 1]
+                logger.info(
+                    "%s is unavailable. Switching to %s.",
+                    provider.PROVIDER.title(),
+                    next_provider.PROVIDER.title(),
+                )
 
         if not configured_provider_found:
             raise ProviderManagerError(
