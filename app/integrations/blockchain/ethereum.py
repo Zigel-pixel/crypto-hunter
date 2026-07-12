@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 
-from app.integrations.blockchain.models import WalletSnapshot
+from app.integrations.blockchain.models import WalletAsset, WalletSnapshot
 
 CHAIN = "ethereum"
 MOCK_PROVIDER = "mock"
@@ -16,4 +16,4 @@ def validate_address(address: str) -> bool:
 async def get_wallet(address: str) -> WalletSnapshot:
     if not validate_address(address):
         raise ValueError("Invalid Ethereum wallet address")
-    return WalletSnapshot(CHAIN, address, (), MOCK_PROVIDER)
+    return WalletSnapshot(CHAIN, address, (WalletAsset("ETH", 1.25),), MOCK_PROVIDER)

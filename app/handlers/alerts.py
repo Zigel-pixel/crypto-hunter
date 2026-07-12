@@ -1,5 +1,5 @@
 from aiogram import Router, types
-from aiogram.filters import Command
+from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
@@ -130,6 +130,19 @@ async def delete_selected_alert(message: types.Message, state: FSMContext) -> No
         )
 
 
-@router.message(lambda message: message.text == "⬅ Back")
-async def back_to_main(message: types.Message) -> None:
+@router.message(lambda message: message.text == "⬅ Back", StateFilter(None))
+@router.message(
+    lambda message: message.text == "⬅ Back", AlertStates.waiting_for_coin
+)
+@router.message(
+    lambda message: message.text == "⬅ Back", AlertStates.waiting_for_condition
+)
+@router.message(
+    lambda message: message.text == "⬅ Back", AlertStates.waiting_for_price
+)
+@router.message(
+    lambda message: message.text == "⬅ Back", AlertStates.deleting_alert
+)
+async def back_to_main(message: types.Message, state: FSMContext) -> None:
+    await state.clear()
     await message.answer("↩ Returned to main menu.", reply_markup=build_main_keyboard())

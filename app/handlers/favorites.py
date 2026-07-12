@@ -1,5 +1,5 @@
 from aiogram import Router, types
-from aiogram.filters import CommandStart
+from aiogram.filters import CommandStart, StateFilter
 
 from app.keyboards.favorites import (
     build_coin_selection_keyboard,
@@ -82,7 +82,7 @@ async def handle_remove_coin(message: types.Message) -> None:
     )
 
 
-@router.message(lambda message: message.text == "⬅ Back")
+@router.message(lambda message: message.text == "⬅ Back", StateFilter(None))
 async def back_to_main(message: types.Message) -> None:
     await message.answer(
         "↩ Returned to main menu.",

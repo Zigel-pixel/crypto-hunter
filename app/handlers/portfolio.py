@@ -1,5 +1,6 @@
 from aiogram import Router, types
 from aiogram.fsm.context import FSMContext
+from aiogram.filters import StateFilter
 from aiogram.fsm.state import State, StatesGroup
 
 from app.keyboards.main import build_main_keyboard
@@ -154,6 +155,22 @@ async def remove_selected_asset(message: types.Message, state: FSMContext) -> No
         )
 
 
-@router.message(lambda message: message.text == "⬅ Back")
-async def back_to_main(message: types.Message) -> None:
+@router.message(lambda message: message.text == "⬅ Back", StateFilter(None))
+@router.message(
+    lambda message: message.text == "⬅ Back", PortfolioStates.choosing_coin
+)
+@router.message(
+    lambda message: message.text == "⬅ Back", PortfolioStates.entering_amount
+)
+@router.message(
+    lambda message: message.text == "⬅ Back", PortfolioStates.selecting_update_asset
+)
+@router.message(
+    lambda message: message.text == "⬅ Back", PortfolioStates.entering_updated_amount
+)
+@router.message(
+    lambda message: message.text == "⬅ Back", PortfolioStates.selecting_remove_asset
+)
+async def back_to_main(message: types.Message, state: FSMContext) -> None:
+    await state.clear()
     await message.answer("↩ Returned to main menu.", reply_markup=build_main_keyboard())

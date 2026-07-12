@@ -1,5 +1,5 @@
 from aiogram import Router, types
-from aiogram.filters import Command
+from aiogram.filters import Command, StateFilter
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from app.keyboards.main import build_main_keyboard
@@ -189,6 +189,6 @@ async def handle_rates_callback(callback: types.CallbackQuery) -> None:
             await show_coin_page(callback, coin_id)
 
 
-@router.message(lambda message: message.text == "⬅ Back")
+@router.message(lambda message: message.text == "⬅ Back", StateFilter(None))
 async def back_to_main(message: types.Message) -> None:
     await message.answer("↩ Returned to main menu.", reply_markup=build_main_keyboard())

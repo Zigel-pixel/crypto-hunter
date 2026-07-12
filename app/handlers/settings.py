@@ -1,4 +1,5 @@
 from aiogram import Router, types
+from aiogram.filters import StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
@@ -81,7 +82,19 @@ async def save_timezone(message: types.Message, state: FSMContext) -> None:
     await message.answer("✅ Settings updated.", reply_markup=build_main_keyboard())
 
 
-@router.message(lambda message: message.text == "⬅ Back")
+@router.message(lambda message: message.text == "⬅ Back", StateFilter(None))
+@router.message(
+    lambda message: message.text == "⬅ Back", SettingsStates.choosing_setting_type
+)
+@router.message(
+    lambda message: message.text == "⬅ Back", SettingsStates.choosing_language
+)
+@router.message(
+    lambda message: message.text == "⬅ Back", SettingsStates.choosing_currency
+)
+@router.message(
+    lambda message: message.text == "⬅ Back", SettingsStates.choosing_timezone
+)
 async def back_to_main(message: types.Message, state: FSMContext) -> None:
     await state.clear()
     await message.answer("↩ Returned to main menu.", reply_markup=build_main_keyboard())

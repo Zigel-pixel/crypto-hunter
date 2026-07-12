@@ -61,4 +61,17 @@ async def init_db() -> None:
             """
         )
 
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS wallets (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                telegram_id INTEGER NOT NULL,
+                network TEXT NOT NULL,
+                address TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                UNIQUE(telegram_id, network, address)
+            )
+            """
+        )
+
         await db.commit()
