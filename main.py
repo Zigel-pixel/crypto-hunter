@@ -1,4 +1,5 @@
 import asyncio
+from contextlib import suppress
 
 from aiogram import Bot, Dispatcher
 
@@ -11,6 +12,7 @@ from app.handlers.rates import router as rates_router
 from app.handlers.settings import router as settings_router
 from app.handlers.start import router as start_router
 from app.handlers.wallet import router as wallet_router
+from app.services.alert_monitor_service import monitor_alerts
 from app.utils.config import BOT_TOKEN
 
 
@@ -28,7 +30,13 @@ async def main() -> None:
     dp.include_router(wallet_router)
 
     await init_db()
-    await dp.start_polling(bot)
+    alert_monitor_task = asyncio.create_task(monitor_alerts(bot))
+    try:
+        await dp.start_polling(bot)
+    finally:
+        alert_monitor_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await alert_monitor_task
 
 
 if __name__ == "__main__":

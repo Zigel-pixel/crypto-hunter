@@ -14,3 +14,15 @@ logger.info(".env loaded: %s", env_file_loaded)
 
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
+
+
+def _get_positive_int(name: str, default: int) -> int:
+    try:
+        value = int(os.getenv(name, str(default)))
+    except ValueError:
+        logger.warning("Invalid %s value; using %s", name, default)
+        return default
+    return value if value > 0 else default
+
+
+ALERT_CHECK_INTERVAL_SECONDS = _get_positive_int("ALERT_CHECK_INTERVAL_SECONDS", 60)
