@@ -1,11 +1,14 @@
 from aiogram.types import KeyboardButton, ReplyKeyboardMarkup
 
+from app.utils.assets import SUPPORTED_SYMBOLS
+
 
 def build_portfolio_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="➕ Add Asset")],
             [KeyboardButton(text="📋 My Portfolio")],
+            [KeyboardButton(text="📊 P/L Chart")],
             [KeyboardButton(text="✏ Update Asset")],
             [KeyboardButton(text="🗑 Remove Asset")],
             [KeyboardButton(text="⬅ Back")],
@@ -15,13 +18,13 @@ def build_portfolio_keyboard() -> ReplyKeyboardMarkup:
 
 
 def build_portfolio_asset_keyboard() -> ReplyKeyboardMarkup:
+    buttons = [
+        [KeyboardButton(text=symbol) for symbol in SUPPORTED_SYMBOLS[index : index + 3]]
+        for index in range(0, len(SUPPORTED_SYMBOLS), 3)
+    ]
+    buttons.append([KeyboardButton(text="⬅ Back")])
     return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="BTC")],
-            [KeyboardButton(text="ETH")],
-            [KeyboardButton(text="SOL")],
-            [KeyboardButton(text="⬅ Back")],
-        ],
+        keyboard=buttons,
         resize_keyboard=True,
     )
 

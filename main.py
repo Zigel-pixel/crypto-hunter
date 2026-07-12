@@ -5,6 +5,7 @@ from aiogram import Bot, Dispatcher
 
 from app.database.database import init_db
 from app.handlers.alerts import router as alerts_router
+from app.handlers.consultant import router as consultant_router
 from app.handlers.favorites import router as favorites_router
 from app.handlers.news import router as news_router
 from app.handlers.portfolio import router as portfolio_router
@@ -25,6 +26,7 @@ async def main() -> None:
     dp.include_router(favorites_router)
     dp.include_router(alerts_router)
     dp.include_router(news_router)
+    dp.include_router(consultant_router)
     dp.include_router(portfolio_router)
     dp.include_router(settings_router)
     dp.include_router(wallet_router)

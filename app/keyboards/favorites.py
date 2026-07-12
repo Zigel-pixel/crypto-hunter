@@ -14,7 +14,10 @@ def build_favorites_keyboard() -> ReplyKeyboardMarkup:
 
 
 def build_coin_selection_keyboard(coins: list[str]) -> ReplyKeyboardMarkup:
-    buttons = [[KeyboardButton(text=coin)] for coin in coins]
+    buttons = [
+        [KeyboardButton(text=coin) for coin in coins[index : index + 2]]
+        for index in range(0, len(coins), 2)
+    ]
     buttons.append([KeyboardButton(text="⬅ Back")])
     return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
 

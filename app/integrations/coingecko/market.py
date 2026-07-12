@@ -9,13 +9,12 @@ from typing import Any
 import aiohttp
 import certifi
 
+from app.utils.assets import COIN_IDS
+
 COINGECKO_MARKETS_URL = "https://api.coingecko.com/api/v3/coins/markets"
-DEFAULT_COIN_IDS: tuple[str, ...] = ("bitcoin", "ethereum", "solana")
-COIN_SYMBOLS: dict[str, str] = {
-    "bitcoin": "BTC",
-    "ethereum": "ETH",
-    "solana": "SOL",
-}
+COINGECKO_CHART_URL = "https://api.coingecko.com/api/v3/coins/{coin_id}/market_chart"
+DEFAULT_COIN_IDS: tuple[str, ...] = tuple(COIN_IDS.values())
+COIN_SYMBOLS: dict[str, str] = {coin_id: symbol for symbol, coin_id in COIN_IDS.items()}
 REQUEST_TIMEOUT_SECONDS = 10
 
 logger = logging.getLogger(__name__)
@@ -160,3 +159,37 @@ async def fetch_market_prices() -> tuple[str | None, dict[str, float] | None]:
         if (snapshot := snapshots.get(coin_id)) is not None and snapshot.price is not None
     }
     return (updated_at, prices) if prices else (None, None)
+
+
+async def fetch_price_history(coin_id: str, days: int = 1) -> list[tuple[datetime, float]]:
+    """Fetch real USD price points for a chart."""
+    params = {"vs_currency": "usd", "days": str(days)}
+    ssl_context = ssl.create_default_context(cafile=certifi.where())
+    try:
+        timeout = aiohttp.ClientTimeout(total=REQUEST_TIMEOUT_SECONDS)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(
+                COINGECKO_CHART_URL.format(coin_id=coin_id),
+                params=params,
+                ssl=ssl_context,
+            ) as response:
+                response.raise_for_status()
+                data: Any = await response.json()
+    except (aiohttp.ClientError, TimeoutError, ValueError) as exc:
+        logger.warning("CoinGecko chart request failed: %s", exc)
+        return []
+    prices = data.get("prices") if isinstance(data, dict) else None
+    if not isinstance(prices, list):
+        return []
+    history: list[tuple[datetime, float]] = []
+    for point in prices:
+        if (
+            isinstance(point, list)
+            and len(point) >= 2
+            and isinstance(point[0], (int, float))
+            and isinstance(point[1], (int, float))
+        ):
+            history.append(
+                (datetime.fromtimestamp(point[0] / 1000, timezone.utc), float(point[1]))
+            )
+    return history

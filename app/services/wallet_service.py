@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
-from datetime import datetime, timezone
+import asyncio
 import logging
+from collections.abc import Awaitable, Callable
+from dataclasses import replace
+from datetime import datetime, timezone
 
 import aiosqlite
 
-from app.integrations.blockchain import bnb, bitcoin, ethereum, solana
+from app.integrations.blockchain import bnb, bitcoin, ethereum, solana, tron
 from app.integrations.blockchain.models import WalletSnapshot
 from app.models.wallet import StoredWallet
+from app.services.market_service import fetch_market_prices
 
 DB_NAME = "crypto.db"
 
@@ -19,12 +22,14 @@ NETWORK_LABELS: dict[str, str] = {
     "bitcoin": "₿ Bitcoin",
     "bnb": "🟡 BNB Chain",
     "solana": "🟣 Solana",
+    "tron": "🔴 Tron (TRX / USDT)",
 }
 NETWORK_TITLES: dict[str, str] = {
     "ethereum": "Ethereum",
     "bitcoin": "Bitcoin",
     "bnb": "BNB Chain",
     "solana": "Solana",
+    "tron": "Tron",
 }
 PORTFOLIO_DIVIDER = "━━━━━━━━━━━━━━"
 SHORT_ADDRESS_PREFIX_LENGTH = 6
@@ -40,12 +45,14 @@ _WALLET_FETCHERS: dict[str, WalletFetcher] = {
     "ethereum": ethereum.get_wallet,
     "solana": solana.get_wallet,
     "bnb": bnb.get_wallet,
+    "tron": tron.get_wallet,
 }
 _ADDRESS_VALIDATORS: dict[str, AddressValidator] = {
     "bitcoin": bitcoin.validate_address,
     "ethereum": ethereum.validate_address,
     "solana": solana.validate_address,
     "bnb": bnb.validate_address,
+    "tron": tron.validate_address,
 }
 
 
@@ -120,19 +127,42 @@ async def get_wallets_text(telegram_id: int) -> str:
     if not wallets:
         return "👛 No wallets added yet."
 
+    results = await asyncio.gather(
+        *(get_wallet(wallet.network, wallet.address) for wallet in wallets),
+        return_exceptions=True,
+    )
+    _, prices = await fetch_market_prices()
+
     lines = []
-    for wallet in wallets:
-        try:
-            snapshot = await get_wallet(wallet.network, wallet.address)
-        except Exception as exc:
-            logger.warning("Could not load %s wallet: %s", wallet.network, exc)
+    for wallet, result in zip(wallets, results, strict=True):
+        if isinstance(result, BaseException) and not isinstance(result, Exception):
+            raise result
+        if isinstance(result, BaseException):
+            logger.warning("Could not load %s wallet: %s", wallet.network, result)
             lines.extend(_format_wallet_error(wallet.network, wallet.address))
             lines.append("")
             continue
-
+        snapshot = _apply_market_prices(result, prices or {})
         lines.extend(_format_wallet_portfolio(snapshot))
         lines.append("")
     return "\n".join(lines).rstrip()
+
+
+def _apply_market_prices(
+    snapshot: WalletSnapshot, prices: dict[str, float]
+) -> WalletSnapshot:
+    assets = tuple(
+        replace(
+            asset,
+            usd_value=(asset.amount * prices[asset.symbol])
+            if asset.symbol in prices
+            else asset.usd_value,
+        )
+        for asset in snapshot.assets
+    )
+    known_values = [asset.usd_value for asset in assets if asset.usd_value is not None]
+    total = sum(known_values) if known_values and len(known_values) == len(assets) else None
+    return replace(snapshot, assets=assets, total_usd_value=total)
 
 
 def _format_wallet_portfolio(snapshot: WalletSnapshot) -> list[str]:

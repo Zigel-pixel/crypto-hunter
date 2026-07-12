@@ -1,8 +1,9 @@
 from aiogram import Router, types
 from aiogram.filters import Command, StateFilter
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import BufferedInputFile, InlineKeyboardButton, InlineKeyboardMarkup
 
-from app.keyboards.main import build_main_keyboard
+from app.keyboards.main import action_labels, build_main_keyboard
+from app.services.chart_service import build_crypto_chart, render_chart
 from app.services.market_service import (
     CoinSnapshot,
     fetch_market_snapshots,
@@ -12,13 +13,14 @@ from app.services.market_service import (
     format_price,
     format_supply,
 )
+from app.services.metals_service import METALS, fetch_metal, fetch_metal_history
+from app.utils.assets import ASSET_LABELS, COIN_IDS
 
 router = Router()
 
 COIN_OPTIONS = {
-    "bitcoin": {"label": "🟠 Bitcoin", "symbol": "BTC"},
-    "ethereum": {"label": "🔵 Ethereum", "symbol": "ETH"},
-    "solana": {"label": "🟣 Solana", "symbol": "SOL"},
+    coin_id: {"label": ASSET_LABELS[symbol], "symbol": symbol}
+    for symbol, coin_id in COIN_IDS.items()
 }
 
 
@@ -31,6 +33,10 @@ def build_rates_menu_keyboard() -> InlineKeyboardMarkup:
         ]
         for coin_id, meta in COIN_OPTIONS.items()
     ]
+    buttons.extend(
+        [InlineKeyboardButton(text=label, callback_data=f"rates:metal:{symbol}")]
+        for symbol, label in METALS.items()
+    )
     buttons.append(
         [InlineKeyboardButton(text="🔄 Refresh", callback_data="rates:refresh:menu")]
     )
@@ -104,20 +110,7 @@ def build_coin_page_text(snapshot: CoinSnapshot) -> str:
 
 
 async def send_rates_menu(target: types.Message | types.CallbackQuery) -> None:
-    updated_at, snapshots = await fetch_market_snapshots()
-
-    if not updated_at or not snapshots:
-        text = "❌ Failed to fetch market data. Please try again later."
-        if isinstance(target, types.CallbackQuery):
-            await target.message.edit_text(
-                text, reply_markup=build_rates_menu_keyboard()
-            )
-            await target.answer()
-        else:
-            await target.answer(text)
-        return
-
-    text = "📈 Rates\n\nChoose coin"
+    text = "📈 Rates\n\nChoose cryptocurrency or precious metal"
     if isinstance(target, types.CallbackQuery):
         await target.message.edit_text(text, reply_markup=build_rates_menu_keyboard())
         await target.answer()
@@ -144,12 +137,50 @@ async def show_coin_page(
     snapshot = snapshots[coin_id]
     text = build_coin_page_text(snapshot)
     markup = build_coin_keyboard(coin_id)
+    chart = await build_crypto_chart(coin_id, snapshot.symbol.upper())
 
-    if isinstance(target, types.CallbackQuery):
+    if chart is not None:
+        photo = BufferedInputFile(chart, filename=f"{coin_id}-24h.png")
+        if isinstance(target, types.CallbackQuery):
+            await target.message.answer_photo(photo, caption=text, reply_markup=markup)
+            await target.answer()
+        else:
+            await target.answer_photo(photo, caption=text, reply_markup=markup)
+    elif isinstance(target, types.CallbackQuery):
         await target.message.edit_text(text, reply_markup=markup)
         await target.answer()
     else:
         await target.answer(text, reply_markup=markup)
+
+
+async def show_metal_page(callback: types.CallbackQuery, symbol: str) -> None:
+    snapshot = await fetch_metal(symbol)
+    if snapshot is None:
+        await callback.answer("Metal data is temporarily unavailable.", show_alert=True)
+        return
+    history = await fetch_metal_history(symbol)
+    text = "\n".join(
+        [
+            snapshot.name,
+            "",
+            "💵 Spot price per troy ounce",
+            f"${snapshot.price:,.2f}",
+            "",
+            "🕒 Updated",
+            snapshot.updated_at.strftime("%H:%M UTC"),
+        ]
+    )
+    markup = build_coin_keyboard(f"metal:{symbol}")
+    if len(history) >= 2:
+        chart = render_chart(history, f"{symbol}/USD — 30 days")
+        await callback.message.answer_photo(
+            BufferedInputFile(chart, filename=f"{symbol.lower()}-30d.png"),
+            caption=text,
+            reply_markup=markup,
+        )
+    else:
+        await callback.message.answer(text, reply_markup=markup)
+    await callback.answer()
 
 
 @router.message(Command("rates"))
@@ -157,7 +188,7 @@ async def show_rates(message: types.Message) -> None:
     await send_rates_menu(message)
 
 
-@router.message(lambda message: message.text == "📈 Rates")
+@router.message(lambda message: message.text in action_labels(0))
 async def show_rates_button(message: types.Message) -> None:
     await send_rates_menu(message)
 
@@ -181,10 +212,16 @@ async def handle_rates_callback(callback: types.CallbackQuery) -> None:
         await show_coin_page(callback, coin_id)
         return
 
+    if data.startswith("rates:metal:"):
+        await show_metal_page(callback, data.split(":", 2)[2])
+        return
+
     if data.startswith("rates:refresh:"):
         coin_id = data.split(":", 2)[2]
         if coin_id == "menu":
             await send_rates_menu(callback)
+        elif coin_id.startswith("metal:"):
+            await show_metal_page(callback, coin_id.split(":", 1)[1])
         else:
             await show_coin_page(callback, coin_id)
 

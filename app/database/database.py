@@ -50,6 +50,11 @@ async def init_db() -> None:
             """
         )
 
+        cursor = await db.execute("PRAGMA table_info(portfolio)")
+        portfolio_columns = {row[1] for row in await cursor.fetchall()}
+        if "average_buy_price" not in portfolio_columns:
+            await db.execute("ALTER TABLE portfolio ADD COLUMN average_buy_price REAL")
+
         await db.execute(
             """
             CREATE TABLE IF NOT EXISTS settings (

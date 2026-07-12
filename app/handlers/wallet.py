@@ -5,6 +5,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
 from app.keyboards.main import build_main_keyboard
+from app.keyboards.main import action_labels
 from app.keyboards.wallet import (
     ADD_WALLET_BUTTON,
     BACK_BUTTON,
@@ -34,7 +35,7 @@ class WalletStates(StatesGroup):
     selecting_wallet_to_remove = State()
 
 
-@router.message(lambda message: message.text == WALLETS_MENU_BUTTON)
+@router.message(lambda message: message.text in action_labels(5))
 async def wallets_entry(message: types.Message, state: FSMContext) -> None:
     await state.clear()
     await message.answer("👛 Wallets", reply_markup=build_wallet_keyboard())

@@ -1,18 +1,26 @@
 from aiogram import Router, types
-from aiogram.filters import CommandStart, StateFilter
+from aiogram.filters import StateFilter
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 
 from app.keyboards.favorites import (
     build_coin_selection_keyboard,
     build_favorites_keyboard,
     build_remove_selection_keyboard,
 )
-from app.keyboards.main import build_main_keyboard
+from app.keyboards.main import action_labels, build_main_keyboard
 from app.services.favorites_service import add_favorite, get_favorites, remove_favorite
+from app.utils.assets import ASSET_LABELS, SUPPORTED_SYMBOLS
 
 router = Router()
 
-AVAILABLE_COINS = ["🟠 BTC", "🔵 ETH", "🟣 SOL"]
-COIN_TITLES = {"🟠 BTC": "BTC", "🔵 ETH": "ETH", "🟣 SOL": "SOL"}
+
+class FavoriteStates(StatesGroup):
+    choosing_add = State()
+    choosing_remove = State()
+
+AVAILABLE_COINS = [ASSET_LABELS[symbol] for symbol in SUPPORTED_SYMBOLS]
+COIN_TITLES = {label: symbol for symbol, label in ASSET_LABELS.items()}
 
 
 async def show_favorites_menu(message: types.Message) -> None:
@@ -22,13 +30,14 @@ async def show_favorites_menu(message: types.Message) -> None:
     )
 
 
-@router.message(lambda message: message.text == "⭐ Favorites")
+@router.message(lambda message: message.text in action_labels(1))
 async def favorites_entry(message: types.Message) -> None:
     await show_favorites_menu(message)
 
 
 @router.message(lambda message: message.text == "➕ Add Coin")
-async def add_coin_menu(message: types.Message) -> None:
+async def add_coin_menu(message: types.Message, state: FSMContext) -> None:
+    await state.set_state(FavoriteStates.choosing_add)
     await message.answer(
         "➕ Choose a coin to add:",
         reply_markup=build_coin_selection_keyboard(AVAILABLE_COINS),
@@ -48,10 +57,11 @@ async def my_favorites(message: types.Message) -> None:
 
 
 @router.message(lambda message: message.text == "🗑 Remove Coin")
-async def remove_coin_menu(message: types.Message) -> None:
+async def remove_coin_menu(message: types.Message, state: FSMContext) -> None:
     favorites = await get_favorites(message.from_user.id)
 
     if favorites:
+        await state.set_state(FavoriteStates.choosing_remove)
         await message.answer(
             "🗑 Select a coin to remove:",
             reply_markup=build_remove_selection_keyboard(favorites),
@@ -63,19 +73,25 @@ async def remove_coin_menu(message: types.Message) -> None:
         )
 
 
-@router.message(lambda message: message.text in AVAILABLE_COINS)
-async def handle_add_coin(message: types.Message) -> None:
+@router.message(
+    lambda message: message.text in AVAILABLE_COINS, FavoriteStates.choosing_add
+)
+async def handle_add_coin(message: types.Message, state: FSMContext) -> None:
     coin_code = COIN_TITLES[message.text]
     await add_favorite(message.from_user.id, coin_code)
+    await state.clear()
     await message.answer(
         f"✅ {coin_code} added to favorites.",
         reply_markup=build_favorites_keyboard(),
     )
 
 
-@router.message(lambda message: message.text in {"BTC", "ETH", "SOL"})
-async def handle_remove_coin(message: types.Message) -> None:
+@router.message(
+    lambda message: message.text in SUPPORTED_SYMBOLS, FavoriteStates.choosing_remove
+)
+async def handle_remove_coin(message: types.Message, state: FSMContext) -> None:
     await remove_favorite(message.from_user.id, message.text)
+    await state.clear()
     await message.answer(
         f"🗑 {message.text} removed.",
         reply_markup=build_favorites_keyboard(),
@@ -83,7 +99,10 @@ async def handle_remove_coin(message: types.Message) -> None:
 
 
 @router.message(lambda message: message.text == "⬅ Back", StateFilter(None))
-async def back_to_main(message: types.Message) -> None:
+@router.message(lambda message: message.text == "⬅ Back", FavoriteStates.choosing_add)
+@router.message(lambda message: message.text == "⬅ Back", FavoriteStates.choosing_remove)
+async def back_to_main(message: types.Message, state: FSMContext) -> None:
+    await state.clear()
     await message.answer(
         "↩ Returned to main menu.",
         reply_markup=build_main_keyboard(),

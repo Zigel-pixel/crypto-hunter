@@ -2,8 +2,9 @@ from aiogram import Router, types
 from aiogram.filters import StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from app.keyboards.main import build_main_keyboard
+from app.keyboards.main import action_labels, build_main_keyboard
 from app.keyboards.settings import (
     build_currency_keyboard,
     build_language_keyboard,
@@ -22,7 +23,7 @@ class SettingsStates(StatesGroup):
     choosing_timezone = State()
 
 
-@router.message(lambda message: message.text == "⚙ Settings")
+@router.message(lambda message: message.text in action_labels(7))
 async def settings_entry(message: types.Message, state: FSMContext) -> None:
     await state.set_state(SettingsStates.choosing_setting_type)
     await message.answer("⚙ Settings", reply_markup=build_settings_keyboard())
@@ -37,13 +38,22 @@ async def choose_language(message: types.Message, state: FSMContext) -> None:
 
 
 @router.message(
-    lambda message: message.text in {"Ukrainian", "English"},
+    lambda message: message.text in {"Ukrainian", "English", "Russian", "Chinese"},
     SettingsStates.choosing_language,
 )
 async def save_language(message: types.Message, state: FSMContext) -> None:
     await upsert_setting(message.from_user.id, "language", message.text)
     await state.clear()
-    await message.answer("✅ Settings updated.", reply_markup=build_main_keyboard())
+    confirmations = {
+        "Ukrainian": "✅ Мову змінено на українську.",
+        "English": "✅ Language changed to English.",
+        "Russian": "✅ Язык изменён на русский.",
+        "Chinese": "✅ 语言已更改为中文。",
+    }
+    await message.answer(
+        confirmations.get(message.text or "", "✅ Settings updated."),
+        reply_markup=build_main_keyboard(message.text or "English"),
+    )
 
 
 @router.message(
@@ -69,15 +79,27 @@ async def save_currency(message: types.Message, state: FSMContext) -> None:
 )
 async def choose_timezone(message: types.Message, state: FSMContext) -> None:
     await state.set_state(SettingsStates.choosing_timezone)
-    await message.answer("Choose timezone:", reply_markup=build_timezone_keyboard())
+    await message.answer(
+        "Choose a timezone or send any IANA name, for example Europe/Paris, "
+        "America/Los_Angeles or Asia/Dubai:",
+        reply_markup=build_timezone_keyboard(),
+    )
 
 
 @router.message(
-    lambda message: message.text in {"UTC", "UTC+2", "UTC+3"},
+    lambda message: message.text != "⬅ Back",
     SettingsStates.choosing_timezone,
 )
 async def save_timezone(message: types.Message, state: FSMContext) -> None:
-    await upsert_setting(message.from_user.id, "timezone", message.text)
+    timezone_name = (message.text or "").strip()
+    try:
+        ZoneInfo(timezone_name)
+    except ZoneInfoNotFoundError:
+        await message.answer(
+            "Unknown timezone. Use an IANA name such as Europe/Kyiv or Asia/Shanghai."
+        )
+        return
+    await upsert_setting(message.from_user.id, "timezone", timezone_name)
     await state.clear()
     await message.answer("✅ Settings updated.", reply_markup=build_main_keyboard())
 

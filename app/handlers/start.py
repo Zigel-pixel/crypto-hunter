@@ -1,7 +1,7 @@
 from aiogram import Router, types
 from aiogram.filters import CommandStart
 
-from app.keyboards.main import build_main_keyboard
+from app.handlers.common import user_main_keyboard
 
 router = Router()
 
@@ -10,5 +10,5 @@ router = Router()
 async def cmd_start(message: types.Message) -> None:
     await message.answer(
         "🏠 Crypto Hunter\n\nWelcome to the MVP bot.",
-        reply_markup=build_main_keyboard(),
+        reply_markup=await user_main_keyboard(message.from_user.id),
     )

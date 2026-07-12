@@ -3,6 +3,7 @@
 from app.integrations.coingecko.market import (
     CoinSnapshot,
     fetch_market_prices,
+    fetch_price_history,
     fetch_market_snapshots,
     format_compact_currency,
     format_compact_number,
@@ -14,6 +15,7 @@ from app.integrations.coingecko.market import (
 __all__ = [
     "CoinSnapshot",
     "fetch_market_prices",
+    "fetch_price_history",
     "fetch_market_snapshots",
     "format_compact_currency",
     "format_compact_number",
