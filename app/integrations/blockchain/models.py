@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 
 
 @dataclass(frozen=True)
@@ -17,3 +18,4 @@ class WalletSnapshot:
     assets: tuple[WalletAsset, ...]
     provider: str
     total_usd_value: float | None = None
+    updated_at: datetime | None = None

@@ -27,6 +27,8 @@ NETWORK_TITLES: dict[str, str] = {
     "solana": "Solana",
 }
 PORTFOLIO_DIVIDER = "━━━━━━━━━━━━━━"
+SHORT_ADDRESS_PREFIX_LENGTH = 6
+SHORT_ADDRESS_SUFFIX_LENGTH = 4
 
 logger = logging.getLogger(__name__)
 
@@ -138,22 +140,25 @@ def _format_wallet_portfolio(snapshot: WalletSnapshot) -> list[str]:
     lines = [
         "💼 Portfolio",
         "",
-        "Address",
-        snapshot.address,
-        "",
-        "Network",
         network_title,
-        "",
+        _format_address(snapshot.address),
         PORTFOLIO_DIVIDER,
     ]
     if not snapshot.assets:
-        lines.append("Wallet is empty.")
+        lines.extend(
+            [
+                "Wallet is empty.",
+                "",
+                "Last updated",
+                _format_updated_at(snapshot.updated_at),
+            ]
+        )
         return lines
 
     for asset in snapshot.assets:
         lines.extend([asset.symbol, _format_amount(asset.amount)])
         if asset.usd_value is not None:
-            lines.append(_format_usd(asset.usd_value))
+            lines.append(_format_approx_usd(asset.usd_value))
         lines.append("")
     lines.extend(
         [
@@ -161,6 +166,9 @@ def _format_wallet_portfolio(snapshot: WalletSnapshot) -> list[str]:
             "",
             "Total Portfolio Value",
             _format_usd(snapshot.total_usd_value),
+            "",
+            "Last updated",
+            _format_updated_at(snapshot.updated_at),
         ]
     )
     return lines
@@ -170,13 +178,12 @@ def _format_wallet_error(network: str, address: str) -> list[str]:
     return [
         "💼 Portfolio",
         "",
-        "Address",
-        address,
-        "",
-        "Network",
         _network_title(network),
+        _format_address(address),
+        PORTFOLIO_DIVIDER,
         "",
-        "❌ Unable to load wallet portfolio. Please try again later.",
+        "Unable to retrieve wallet data.",
+        "Please try again in a few moments.",
     ]
 
 
@@ -190,3 +197,19 @@ def _format_amount(value: float) -> str:
 
 def _format_usd(value: float | None) -> str:
     return "N/A" if value is None else f"${value:,.2f}"
+
+
+def _format_approx_usd(value: float) -> str:
+    return f"≈ ${value:,.2f}"
+
+
+def _format_address(address: str) -> str:
+    if len(address) <= SHORT_ADDRESS_PREFIX_LENGTH + SHORT_ADDRESS_SUFFIX_LENGTH:
+        return address
+    return f"{address[:SHORT_ADDRESS_PREFIX_LENGTH]}...{address[-SHORT_ADDRESS_SUFFIX_LENGTH:]}"
+
+
+def _format_updated_at(value: datetime | None) -> str:
+    if value is None:
+        return "N/A"
+    return value.astimezone(timezone.utc).strftime("%H:%M UTC")
