@@ -7,6 +7,7 @@ from dataclasses import dataclass
 class WalletAsset:
     symbol: str
     amount: float
+    usd_value: float | None = None
 
 
 @dataclass(frozen=True)
@@ -15,3 +16,4 @@ class WalletSnapshot:
     address: str
     assets: tuple[WalletAsset, ...]
     provider: str
+    total_usd_value: float | None = None

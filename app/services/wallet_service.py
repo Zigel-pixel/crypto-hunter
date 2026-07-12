@@ -20,6 +20,13 @@ NETWORK_LABELS: dict[str, str] = {
     "bnb": "🟡 BNB Chain",
     "solana": "🟣 Solana",
 }
+NETWORK_TITLES: dict[str, str] = {
+    "ethereum": "Ethereum",
+    "bitcoin": "Bitcoin",
+    "bnb": "BNB Chain",
+    "solana": "Solana",
+}
+PORTFOLIO_DIVIDER = "━━━━━━━━━━━━━━"
 
 logger = logging.getLogger(__name__)
 
@@ -111,21 +118,75 @@ async def get_wallets_text(telegram_id: int) -> str:
     if not wallets:
         return "👛 No wallets added yet."
 
-    lines = ["👛 Your Wallets", ""]
+    lines = []
     for wallet in wallets:
-        network_label = NETWORK_LABELS.get(wallet.network, wallet.network.title())
         try:
             snapshot = await get_wallet(wallet.network, wallet.address)
         except Exception as exc:
             logger.warning("Could not load %s wallet: %s", wallet.network, exc)
-            lines.extend(
-                [network_label, wallet.address, "Balance unavailable", ""]
-            )
+            lines.extend(_format_wallet_error(wallet.network, wallet.address))
+            lines.append("")
             continue
 
-        lines.extend(
-            [NETWORK_LABELS.get(snapshot.chain, snapshot.chain.title()), snapshot.address]
-            + [f"• {asset.symbol}: {asset.amount:.8f}" for asset in snapshot.assets]
-            + [""]
-        )
+        lines.extend(_format_wallet_portfolio(snapshot))
+        lines.append("")
     return "\n".join(lines).rstrip()
+
+
+def _format_wallet_portfolio(snapshot: WalletSnapshot) -> list[str]:
+    network_title = _network_title(snapshot.chain)
+    lines = [
+        "💼 Portfolio",
+        "",
+        "Address",
+        snapshot.address,
+        "",
+        "Network",
+        network_title,
+        "",
+        PORTFOLIO_DIVIDER,
+    ]
+    if not snapshot.assets:
+        lines.append("Wallet is empty.")
+        return lines
+
+    for asset in snapshot.assets:
+        lines.extend([asset.symbol, _format_amount(asset.amount)])
+        if asset.usd_value is not None:
+            lines.append(_format_usd(asset.usd_value))
+        lines.append("")
+    lines.extend(
+        [
+            PORTFOLIO_DIVIDER,
+            "",
+            "Total Portfolio Value",
+            _format_usd(snapshot.total_usd_value),
+        ]
+    )
+    return lines
+
+
+def _format_wallet_error(network: str, address: str) -> list[str]:
+    return [
+        "💼 Portfolio",
+        "",
+        "Address",
+        address,
+        "",
+        "Network",
+        _network_title(network),
+        "",
+        "❌ Unable to load wallet portfolio. Please try again later.",
+    ]
+
+
+def _network_title(network: str) -> str:
+    return NETWORK_TITLES.get(network, network.title())
+
+
+def _format_amount(value: float) -> str:
+    return f"{value:.8f}".rstrip("0").rstrip(".")
+
+
+def _format_usd(value: float | None) -> str:
+    return "N/A" if value is None else f"${value:,.2f}"
