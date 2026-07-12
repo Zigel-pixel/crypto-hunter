@@ -19,16 +19,16 @@ Telegram bot for cryptocurrency tracking.
 
 Ethereum wallet data uses a provider manager with the following behavior:
 
-- Moralis is the primary provider and is retried once on failure.
-- Alchemy is used automatically if Moralis remains unavailable.
+- Alchemy is the primary provider and is retried once on failure.
+- Etherscan is used automatically if Alchemy remains unavailable.
 - Successful wallet responses are cached in memory for 60 seconds.
 - Concurrent requests for the same wallet share one provider request.
 
 Configure at least one provider in `.env`:
 
 ```env
-MORALIS_API_KEY=your_moralis_api_key
 ALCHEMY_API_KEY=your_alchemy_api_key
+ETHERSCAN_API_KEY=your_etherscan_api_key
 ```
 
 ## Stack

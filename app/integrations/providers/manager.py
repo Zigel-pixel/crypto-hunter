@@ -12,10 +12,10 @@ from typing import Protocol
 
 from app.integrations.blockchain.models import WalletSnapshot
 from app.integrations.providers import ProviderError, ProviderNotConfigured
-from app.integrations.providers import alchemy, moralis
+from app.integrations.providers import alchemy, etherscan
 
 CACHE_TTL_SECONDS = 60
-MORALIS_RETRY_ATTEMPTS = 2
+PRIMARY_PROVIDER_RETRY_ATTEMPTS = 2
 
 logger = logging.getLogger(__name__)
 
@@ -87,8 +87,8 @@ class ProviderManager:
             provider_failed = False
             provider_unavailable = False
             attempts = (
-                MORALIS_RETRY_ATTEMPTS
-                if provider.PROVIDER == moralis.PROVIDER
+                PRIMARY_PROVIDER_RETRY_ATTEMPTS
+                if provider.PROVIDER == alchemy.PROVIDER
                 else 1
             )
             for _ in range(attempts):
@@ -125,7 +125,7 @@ class ProviderManager:
         if not configured_provider_found:
             raise ProviderManagerError(
                 "Wallet providers are not configured. "
-                "Set MORALIS_API_KEY or ALCHEMY_API_KEY."
+                "Set ALCHEMY_API_KEY or ETHERSCAN_API_KEY."
             )
         raise ProviderManagerError(
             "Unable to retrieve wallet data. Please try again in a few moments."
@@ -141,4 +141,4 @@ class ProviderManager:
         return replace(snapshot, updated_at=datetime.now(timezone.utc))
 
 
-ethereum_provider_manager = ProviderManager((moralis, alchemy))
+ethereum_provider_manager = ProviderManager((alchemy, etherscan))
