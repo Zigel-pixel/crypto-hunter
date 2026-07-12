@@ -285,3 +285,4 @@ Production-quality code.
 Think before coding.
 
 Always preserve a working application.
+Always read MASTER_PROMPT.md before starting work.

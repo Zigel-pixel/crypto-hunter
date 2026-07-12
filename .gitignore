@@ -1,24 +1,45 @@
+# Secrets
+.env
+.env.*
+!.env.example
+
 # Python
 __pycache__/
 *.py[cod]
 *.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
 
 # Virtual environments
 .venv/
-.venv-1/
 venv/
+env/
 
-# Environment variables
-.env
-
-# Database
-crypto.db
-
-# macOS
+# IDE / macOS
+.vscode/
+.idea/
 .DS_Store
 
-# VS Code
-.vscode/
-
-# Logs
+# Logs and runtime files
 *.log
+*.pid
+*.sqlite-journal
+*.db-journal
+
+# Local databases — залиш закоментованим, якщо база потрібна в репозиторії
+# *.db
+# *.sqlite
+# *.sqlite3
+
+# Local runtime files
+.crypto-hunter.lock
+
+# Local database
+crypto.db
+*.db
+*.sqlite
+*.sqlite3

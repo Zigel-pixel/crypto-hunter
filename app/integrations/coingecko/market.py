@@ -9,6 +9,7 @@ from typing import Any
 import aiohttp
 import certifi
 
+from app.integrations.coingecko.cache import AsyncTTLCache
 from app.utils.assets import COIN_IDS
 
 COINGECKO_MARKETS_URL = "https://api.coingecko.com/api/v3/coins/markets"
@@ -16,8 +17,15 @@ COINGECKO_CHART_URL = "https://api.coingecko.com/api/v3/coins/{coin_id}/market_c
 DEFAULT_COIN_IDS: tuple[str, ...] = tuple(COIN_IDS.values())
 COIN_SYMBOLS: dict[str, str] = {coin_id: symbol for symbol, coin_id in COIN_IDS.items()}
 REQUEST_TIMEOUT_SECONDS = 10
+CACHE_TTL_SECONDS = 15
+STALE_CACHE_TTL_SECONDS = 15 * 60
+MIN_MANUAL_REFRESH_INTERVAL_SECONDS = 3
 
 logger = logging.getLogger(__name__)
+
+
+class CoinGeckoProviderError(RuntimeError):
+    """Raised when CoinGecko cannot provide valid market data."""
 
 
 @dataclass(frozen=True)
@@ -34,6 +42,16 @@ class CoinSnapshot:
     ath: float | None
     ath_change_percentage: float | None
     updated_at: str
+    high_24h: float | None = None
+    low_24h: float | None = None
+
+
+_snapshot_cache: AsyncTTLCache[tuple[str, dict[str, CoinSnapshot]]] = AsyncTTLCache(
+    CACHE_TTL_SECONDS, STALE_CACHE_TTL_SECONDS, logger, "CoinGecko"
+)
+_history_cache: AsyncTTLCache[list[tuple[datetime, float]]] = AsyncTTLCache(
+    CACHE_TTL_SECONDS, STALE_CACHE_TTL_SECONDS, logger, "CoinGecko"
+)
 
 
 def format_price(value: float | None) -> str:
@@ -88,7 +106,7 @@ def _format_updated_at(value: Any) -> str:
             return "N/A"
     except (OSError, OverflowError, ValueError):
         return "N/A"
-    return parsed.astimezone(timezone.utc).strftime("%H:%M UTC")
+    return parsed.astimezone(timezone.utc).strftime("%H:%M:%S UTC")
 
 
 def _optional_float(value: Any) -> float | None:
@@ -97,7 +115,39 @@ def _optional_float(value: Any) -> float | None:
 
 async def fetch_market_snapshots(
     coin_ids: tuple[str, ...] = DEFAULT_COIN_IDS,
+    *,
+    force_refresh: bool = False,
 ) -> tuple[str | None, dict[str, CoinSnapshot] | None]:
+    cache_key = _market_cache_key(coin_ids)
+    try:
+        return await _snapshot_cache.get(
+            cache_key,
+            lambda: _fetch_market_snapshots_uncached(coin_ids),
+            force_refresh=force_refresh,
+            min_refresh_interval=MIN_MANUAL_REFRESH_INTERVAL_SECONDS,
+        )
+    except CoinGeckoProviderError as exc:
+        logger.debug("CoinGecko market data unavailable: %s", exc)
+        return None, None
+
+
+def market_data_is_stale(coin_ids: tuple[str, ...] = DEFAULT_COIN_IDS) -> bool:
+    return _snapshot_cache.is_stale(_market_cache_key(coin_ids))
+
+
+def market_refresh_in_progress(
+    coin_ids: tuple[str, ...] = DEFAULT_COIN_IDS,
+) -> bool:
+    return _snapshot_cache.is_inflight(_market_cache_key(coin_ids))
+
+
+def _market_cache_key(coin_ids: tuple[str, ...]) -> str:
+    return "markets:" + ",".join(sorted(coin_ids))
+
+
+async def _fetch_market_snapshots_uncached(
+    coin_ids: tuple[str, ...],
+) -> tuple[str, dict[str, CoinSnapshot]]:
     params = {
         "vs_currency": "usd",
         "ids": ",".join(coin_ids),
@@ -118,8 +168,7 @@ async def fetch_market_snapshots(
                 response.raise_for_status()
                 data: list[dict[str, Any]] = await response.json()
     except (aiohttp.ClientError, TimeoutError, ValueError) as exc:
-        logger.warning("CoinGecko market request failed: %s", exc)
-        return None, None
+        raise CoinGeckoProviderError(str(exc)) from exc
 
     snapshots: dict[str, CoinSnapshot] = {}
     for item in data:
@@ -133,6 +182,8 @@ async def fetch_market_snapshots(
             symbol=str(item.get("symbol") or coin_id.upper()),
             price=_optional_float(item.get("current_price")),
             change_24h=_optional_float(item.get("price_change_percentage_24h")),
+            high_24h=_optional_float(item.get("high_24h")),
+            low_24h=_optional_float(item.get("low_24h")),
             market_cap=_optional_float(item.get("market_cap")),
             volume_24h=_optional_float(item.get("total_volume")),
             market_rank=rank if isinstance(rank, int) else None,
@@ -143,8 +194,7 @@ async def fetch_market_snapshots(
         )
 
     if not snapshots:
-        logger.warning("CoinGecko market request returned no supported snapshots")
-        return None, None
+        raise CoinGeckoProviderError("market response contained no supported assets")
     return next(iter(snapshots.values())).updated_at, snapshots
 
 
@@ -163,6 +213,19 @@ async def fetch_market_prices() -> tuple[str | None, dict[str, float] | None]:
 
 async def fetch_price_history(coin_id: str, days: int = 1) -> list[tuple[datetime, float]]:
     """Fetch real USD price points for a chart."""
+    cache_key = f"history:{coin_id}:{days}"
+    try:
+        return await _history_cache.get(
+            cache_key, lambda: _fetch_price_history_uncached(coin_id, days)
+        )
+    except CoinGeckoProviderError as exc:
+        logger.debug("CoinGecko chart data unavailable: %s", exc)
+        return []
+
+
+async def _fetch_price_history_uncached(
+    coin_id: str, days: int
+) -> list[tuple[datetime, float]]:
     params = {"vs_currency": "usd", "days": str(days)}
     ssl_context = ssl.create_default_context(cafile=certifi.where())
     try:
@@ -176,11 +239,10 @@ async def fetch_price_history(coin_id: str, days: int = 1) -> list[tuple[datetim
                 response.raise_for_status()
                 data: Any = await response.json()
     except (aiohttp.ClientError, TimeoutError, ValueError) as exc:
-        logger.warning("CoinGecko chart request failed: %s", exc)
-        return []
+        raise CoinGeckoProviderError(str(exc)) from exc
     prices = data.get("prices") if isinstance(data, dict) else None
     if not isinstance(prices, list):
-        return []
+        raise CoinGeckoProviderError("chart response did not contain prices")
     history: list[tuple[datetime, float]] = []
     for point in prices:
         if (
@@ -192,4 +254,6 @@ async def fetch_price_history(coin_id: str, days: int = 1) -> list[tuple[datetim
             history.append(
                 (datetime.fromtimestamp(point[0] / 1000, timezone.utc), float(point[1]))
             )
+    if not history:
+        raise CoinGeckoProviderError("chart response contained no valid points")
     return history

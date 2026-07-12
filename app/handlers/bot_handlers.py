@@ -1,18 +1,10 @@
 from aiogram import Router, types
-from aiogram.filters import CommandStart, Command
+from aiogram.filters import Command
 
 from app.keyboards.main import build_main_keyboard
 from app.services.market_service import fetch_market_prices
 
 router = Router()
-
-
-@router.message(CommandStart())
-async def cmd_start(message: types.Message) -> None:
-    await message.answer(
-        "👋 Welcome to Crypto Hunter!\n\nThis is an MVP.",
-        reply_markup=build_main_keyboard(),
-    )
 
 
 @router.message(Command("rates"))

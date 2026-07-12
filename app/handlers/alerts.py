@@ -1,5 +1,5 @@
 from aiogram import Router, types
-from aiogram.filters import Command, StateFilter
+from aiogram.filters import StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
@@ -20,11 +20,6 @@ class AlertStates(StatesGroup):
     waiting_for_condition = State()
     waiting_for_price = State()
     deleting_alert = State()
-
-
-@router.message(Command("start"))
-async def handle_start(message: types.Message) -> None:
-    await message.answer("Welcome to Crypto Hunter", reply_markup=build_main_keyboard())
 
 
 @router.message(lambda message: message.text == "🔔 Alerts")

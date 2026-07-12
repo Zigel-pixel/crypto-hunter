@@ -1,7 +1,7 @@
 from aiogram.types import KeyboardButton, ReplyKeyboardMarkup
 
 MAIN_LABELS = {
-    "English": ("📈 Rates", "⭐ Favorites", "🔔 Alerts", "📰 News", "💼 Portfolio", "👛 Wallets", "🤖 AI Consultant", "⚙ Settings"),
+    "English": ("📈 Rates", "⭐ Watchlist", "🔔 Alerts", "📰 News", "💼 Portfolio", "👛 Wallets", "🤖 AI Consultant", "⚙ Settings"),
     "Ukrainian": ("📈 Курси", "⭐ Обране", "🔔 Alerts", "📰 Новини", "💼 Портфель", "👛 Гаманці", "🤖 AI Консультант", "⚙ Налаштування"),
     "Russian": ("📈 Курсы", "⭐ Избранное", "🔔 Alerts", "📰 Новости", "💼 Портфель", "👛 Кошельки", "🤖 AI Консультант", "⚙ Настройки"),
     "Chinese": ("📈 行情", "⭐ 收藏", "🔔 Alerts", "📰 新闻", "💼 投资组合", "👛 钱包", "🤖 AI 顾问", "⚙ 设置"),
@@ -19,8 +19,20 @@ def build_main_keyboard(language: str = "English") -> ReplyKeyboardMarkup:
             [KeyboardButton(text=labels[0]), KeyboardButton(text=labels[1])],
             [KeyboardButton(text=labels[2]), KeyboardButton(text=labels[3])],
             [KeyboardButton(text=labels[4]), KeyboardButton(text=labels[5])],
+            [KeyboardButton(text="🔎 Assets")],
             [KeyboardButton(text=labels[6])],
             [KeyboardButton(text=labels[7])],
+            [
+                KeyboardButton(text="▶️ Start"),
+                KeyboardButton(text="🔄 Restart"),
+                KeyboardButton(text="⏹ Stop"),
+            ],
         ],
         resize_keyboard=True,
+    )
+
+
+def build_stopped_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[[KeyboardButton(text="▶️ Start")]], resize_keyboard=True
     )

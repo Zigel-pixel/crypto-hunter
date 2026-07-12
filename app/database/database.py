@@ -15,6 +15,13 @@ async def init_db() -> None:
             """
         )
 
+        cursor = await db.execute("PRAGMA table_info(users)")
+        user_columns = {row[1] for row in await cursor.fetchall()}
+        if "is_active" not in user_columns:
+            await db.execute(
+                "ALTER TABLE users ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1"
+            )
+
         await db.execute(
             """
             CREATE TABLE IF NOT EXISTS favorites (
