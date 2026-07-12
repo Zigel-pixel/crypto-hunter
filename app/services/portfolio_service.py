@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from typing import Any, List
+from typing import Any
 
 import aiosqlite
 
-from app.services.market_service import format_price
+from app.services.market_service import fetch_market_prices, format_price
 
 DB_NAME = "crypto.db"
 
@@ -22,7 +22,7 @@ async def add_or_update_asset(telegram_id: int, coin: str, amount: float) -> Non
         await db.commit()
 
 
-async def get_portfolio(telegram_id: int) -> List[dict[str, Any]]:
+async def get_portfolio(telegram_id: int) -> list[dict[str, Any]]:
     async with aiosqlite.connect(DB_NAME) as db:
         cursor = await db.execute(
             "SELECT coin, amount FROM portfolio WHERE telegram_id = ? ORDER BY coin",
@@ -52,7 +52,7 @@ async def delete_asset(telegram_id: int, coin: str) -> bool:
 
 
 async def build_portfolio_text(
-    telegram_id: int, prices: dict[str, dict[str, Any]]
+    telegram_id: int, prices: dict[str, float]
 ) -> str:
     assets = await get_portfolio(telegram_id)
     if not assets:
@@ -64,11 +64,11 @@ async def build_portfolio_text(
     for asset in assets:
         coin = asset["coin"]
         amount = float(asset["amount"])
-        price = prices.get(coin, {}).get("price")
+        price = prices.get(coin)
         if price is None:
             continue
 
-        value = amount * float(price)
+        value = amount * price
         total_value += value
         lines.append(
             f"• {coin}: {amount} @ {format_price(float(price))} = {format_price(value)}"
@@ -77,3 +77,15 @@ async def build_portfolio_text(
     lines.append("")
     lines.append(f"💰 Total Portfolio Value: {format_price(total_value)}")
     return "\n".join(lines)
+
+
+async def get_portfolio_text(telegram_id: int) -> str | None:
+    """Build a portfolio response, or return ``None`` when prices are unavailable."""
+    assets = await get_portfolio(telegram_id)
+    if not assets:
+        return "No assets in your portfolio."
+
+    _, prices = await fetch_market_prices()
+    if not prices:
+        return None
+    return await build_portfolio_text(telegram_id, prices)

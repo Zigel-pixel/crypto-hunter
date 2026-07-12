@@ -1,10 +1,6 @@
-"""Service-facing facade for CoinGecko market data.
+"""CoinGecko market-data integration."""
 
-The concrete HTTP implementation belongs to ``app.integrations.coingecko`` so it
-can be replaced without changing service or handler contracts.
-"""
-
-from app.integrations.coingecko import (
+from app.integrations.coingecko.market import (
     CoinSnapshot,
     fetch_market_prices,
     fetch_market_snapshots,

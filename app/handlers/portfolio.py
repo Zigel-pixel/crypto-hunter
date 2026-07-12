@@ -8,12 +8,11 @@ from app.keyboards.portfolio import (
     build_portfolio_asset_keyboard,
     build_update_asset_keyboard,
 )
-from app.services.market_service import fetch_market_prices
 from app.services.portfolio_service import (
     add_or_update_asset,
-    build_portfolio_text,
     delete_asset,
     get_portfolio,
+    get_portfolio_text,
     update_asset_amount,
 )
 
@@ -68,14 +67,13 @@ async def enter_asset_amount(message: types.Message, state: FSMContext) -> None:
 
 @router.message(lambda message: message.text == "📋 My Portfolio")
 async def my_portfolio(message: types.Message) -> None:
-    _, prices = await fetch_market_prices()
-    if not prices:
+    text = await get_portfolio_text(message.from_user.id)
+    if text is None:
         await message.answer(
             "❌ Failed to fetch market data.", reply_markup=build_portfolio_keyboard()
         )
         return
 
-    text = await build_portfolio_text(message.from_user.id, prices)
     await message.answer(text, reply_markup=build_portfolio_keyboard())
 
 
