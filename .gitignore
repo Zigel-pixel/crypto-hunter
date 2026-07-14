@@ -37,6 +37,18 @@ env/
 
 # Local runtime files
 .crypto-hunter.lock
+.crypto-hunter-qa.lock
+
+# Generated internal QA artifacts
+qa/reports/
+qa/*.db
+qa/**/*.db
+qa*.log
+
+# Machine-specific local deployment helpers
+run_bot.ps1
+update_bot.ps1
+auto_deploy.ps1
 
 # Local database
 crypto.db

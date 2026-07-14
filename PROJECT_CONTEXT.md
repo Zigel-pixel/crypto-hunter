@@ -339,6 +339,36 @@ headlines are not translated without an optional provider; deep manual Telegram
 QA remains required. Next recommended task: manual end-to-end QA and targeted
 polish from real-device results.
 
+## Administrator QA subsystem (2026-07-14)
+
+- Added an independent `python -m qa_bot` entry point that reads only
+  `QA_BOT_TOKEN` and `QA_ADMIN_TELEGRAM_ID`, uses
+  `.crypto-hunter-qa.lock`, and can coexist with the production polling process.
+  Missing/invalid QA configuration fails closed. Unauthorized users receive only
+  `Access denied`; identifiers and tokens are never reported or logged.
+- `qa_bot.models` defines typed scenario, result, severity, status, and run
+  report models. `ScenarioRunner` provides deterministic discovery, suite
+  filtering, per-scenario timeouts, bounded concurrency, cancellation,
+  failure isolation, progress callbacks, and one-active-run protection.
+- Registered smoke, localization, Live, Favorites, Alerts, AI, and Wallet suites
+  in `qa/scenarios`. Standard checks reuse application services and mocks, make
+  no provider requests, never poll Telegram, and initialize schema only in a
+  temporary SQLite path. Real-provider checks remain disabled by default.
+- The administrator controller supports Start/Help, suite commands, status,
+  scenario listing, cancellation, latest report delivery, confirmed report
+  cleanup, and Codex-prompt generation. It has no arbitrary command execution,
+  source-editing, commit, push, deployment, or Codex invocation capability.
+- `reporting.py` produces redacted Telegram summaries, Markdown, JSON, bug
+  sections, and consolidated failed-scenario prompts. `storage.py` accepts only
+  generated filename patterns, prevents traversal, lists newest first, and
+  scopes deletion to the configured report directory.
+- `.env.example` documents QA configuration without values. `.gitignore`
+  excludes generated reports, QA databases/logs, and the QA lock. GitHub issue
+  variables define a disabled future boundary; publishing is not implemented.
+- No new dependency was required. Next milestone: real Telegram E2E using a
+  dedicated user account through Telethon or Pyrogram, then optional explicit
+  GitHub Issue → Codex PR automation.
+
 Return complete modified files only.
 
 Never break existing features.

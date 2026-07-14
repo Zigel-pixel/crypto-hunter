@@ -91,6 +91,57 @@ python -m pytest
 
 No lint or static-type command is currently configured.
 
+## Administrator QA Bot
+
+Crypto Hunter includes a separate internal QA controller. It runs reusable
+service-level and mocked-handler scenarios and reports results through a second
+Telegram bot. It does not use `BOT_TOKEN`, start the production bot, access the
+production database, act as a Telegram user, or click the main bot through the
+Bot API.
+
+Configure `QA_BOT_TOKEN` with a token belonging to a separate Telegram bot and
+set `QA_ADMIN_TELEGRAM_ID` to the only authorized administrator. Never reuse the
+production bot token. Launch the controller independently:
+
+```powershell
+python -m qa_bot
+```
+
+```bash
+python -m qa_bot
+```
+
+The QA process uses `.crypto-hunter-qa.lock`, so it can run alongside the main
+bot's separate lock. It refuses to start when its required QA configuration is
+missing or invalid.
+
+Commands include `/run_all`, `/run_smoke`, `/run_localization`, `/run_live`,
+`/run_favorites`, `/run_alerts`, `/run_ai`, `/run_wallets`, `/status`,
+`/list_scenarios`, `/cancel`, `/last_report`, `/clear_reports`, and
+`/codex_prompt`. Only the configured administrator is accepted.
+
+Suites reuse application validators, formatters, registries, chart rendering,
+and consultant routing. Standard scenarios mock or avoid all external providers
+and initialize SQLite only inside temporary directories. Real provider checks
+are opt-in with `QA_REAL_PROVIDER_CHECKS=true` and are not required for a
+successful standard run.
+
+Each run generates Markdown and JSON under `QA_REPORTS_DIR` (default
+`qa/reports`). Failures include expected/actual behavior, sanitized evidence,
+reproduction steps, suspected modules, and recommended investigation. Generated
+reports, Codex prompts, QA databases, logs, and the QA lock are ignored by Git.
+`/codex_prompt` produces a file containing verified failures; it never invokes
+Codex or modifies the repository. `/clear_reports` requires confirmation and
+deletes only matching generated report files inside the configured directory.
+
+GitHub issue publishing is disabled and not implemented in this milestone.
+`QA_GITHUB_ISSUES_ENABLED`, repository, and token variables reserve a safe
+future integration boundary; no token is required and no issue is created.
+
+This is internal automated QA, not true Telegram end-to-end testing. A future
+milestone can use a dedicated Telegram user account with Telethon or Pyrogram,
+followed later by explicit GitHub Issue → Codex PR automation.
+
 ## Wallet Security
 
 Crypto Hunter is read-only. It stores public wallet addresses, never requests private credentials, cannot sign transactions, and cannot transfer or withdraw funds.
