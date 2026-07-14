@@ -2,7 +2,7 @@ param([switch]$ConfirmSetup)
 $ErrorActionPreference = "Stop"
 $ProductionDir = "C:\CryptoHunterProd"
 $TemplateDir = Join-Path $PSScriptRoot "."
-$Files = @{ "run_bot.template.ps1" = "run_bot.ps1"; "auto_deploy.template.ps1" = "auto_deploy.ps1"; "check_deployment.template.ps1" = "check_deployment.ps1"; "clear_failed_deployment.template.ps1" = "clear_failed_deployment.ps1" }
+$Files = @{ "run_bot.template.ps1" = "run_bot.ps1"; "auto_deploy.template.ps1" = "auto_deploy.ps1"; "atomic_files.template.ps1" = "atomic_files.ps1"; "check_deployment.template.ps1" = "check_deployment.ps1"; "clear_failed_deployment.template.ps1" = "clear_failed_deployment.ps1" }
 $replacements = @($Files.Values | ForEach-Object { Join-Path $ProductionDir $_ })
 Write-Host "The following generated files will replace local edits after timestamped backups:"
 $replacements | ForEach-Object { Write-Host " - $_" }

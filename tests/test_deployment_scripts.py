@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
+import shutil
+import subprocess
+import tempfile
 import unittest
 
 
@@ -70,7 +74,10 @@ class DeploymentScriptAuditTests(unittest.TestCase):
         combined = "\n".join(self.scripts.values())
         self.assertNotIn("-AsHashtable", combined)
         self.assertIn("ConvertFrom-Json", combined)
-        self.assertIn("[IO.File]::Replace", combined)
+        helper = self.scripts["atomic_files.template.ps1"]
+        self.assertIn("[IO.File]::Replace($temporary, $destination, $backup)", helper)
+        self.assertNotRegex(combined, r"File\]::Replace\([^\r\n]*\$(?:null|\{?null\}?)")
+        self.assertNotRegex(combined, r"File\]::Replace\([^\r\n]*,\s*['\"]{2}\s*\)")
         self.assertIn("New-Object Text.UTF8Encoding($false)", combined)
 
     def test_rollback_restores_pointer_before_start_and_reports_substages(self):
@@ -93,8 +100,54 @@ class DeploymentScriptAuditTests(unittest.TestCase):
         install = self.scripts["install_tasks.template.ps1"]
         self.assertLess(install.rindex("if ($LASTEXITCODE -ne 0)"), install.rindex("Installed/updated"))
         clear = self.scripts["clear_failed_deployment.template.ps1"]
-        self.assertLess(clear.index("[IO.File]::Replace"), clear.index("retry block cleared"))
+        self.assertLess(clear.index("Replace-FileAtomic"), clear.index("retry block cleared"))
         self.assertIn("exit 1", clear)
+
+    def test_atomic_helper_validates_recovers_and_cleans(self):
+        helper = self.scripts["atomic_files.template.ps1"]
+        for required in ("temporary file is missing", ".atomic-backup", "same directory", "destination verification failed", "[IO.File]::Move($backup, $destination)"):
+            self.assertIn(required, helper)
+        self.assertLess(helper.index("[IO.File]::Delete($backup)"), helper.index("[IO.File]::Replace"))
+        self.assertIn("-not $replacementSucceeded", helper)
+
+    def test_setup_installs_shared_atomic_helper(self):
+        setup = self.scripts["setup_local.template.ps1"]
+        self.assertIn('"atomic_files.template.ps1" = "atomic_files.ps1"', setup)
+        for consumer in ("auto_deploy.template.ps1", "clear_failed_deployment.template.ps1"):
+            self.assertIn("atomic_files.ps1", self.scripts[consumer])
+
+    @unittest.skipUnless(shutil.which("powershell.exe"), "Windows PowerShell is required")
+    def test_clear_failed_deployment_success_and_failure_exit_codes(self):
+        template = self.scripts["clear_failed_deployment.template.ps1"]
+        helper = self.scripts["atomic_files.template.ps1"]
+        for should_fail in (False, True):
+            with self.subTest(should_fail=should_fail), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                runtime = root / ".deployment"
+                runtime.mkdir()
+                state = runtime / "state.json"
+                state.write_text(json.dumps({"failed_commit": "abc", "failure_count": 4}), encoding="utf-8")
+                script = root / "clear_failed_deployment.ps1"
+                script.write_text(template.replace("C:\\CryptoHunterProd", str(root)), encoding="utf-8")
+                atomic_helper = root / "atomic_files.ps1"
+                atomic_helper.write_text(
+                    'function Replace-FileAtomic { throw "simulated replacement failure" }' if should_fail else helper,
+                    encoding="utf-8",
+                )
+                result = subprocess.run(
+                    ["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", str(script), "-ConfirmClear"],
+                    capture_output=True, text=True, check=False,
+                )
+                output = result.stdout + result.stderr
+                if should_fail:
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertNotIn("retry block cleared", output.casefold())
+                    self.assertEqual(json.loads(state.read_text(encoding="utf-8"))["failed_commit"], "abc")
+                else:
+                    self.assertEqual(result.returncode, 0, output)
+                    self.assertIn("retry block cleared", output.casefold())
+                    self.assertEqual(json.loads(state.read_text(encoding="utf-8-sig"))["failed_commit"], "")
+                    self.assertFalse(state.with_name(state.name + ".atomic-backup").exists())
 
     def test_runtime_paths_are_ignored(self):
         ignore = Path(".gitignore").read_text(encoding="utf-8")

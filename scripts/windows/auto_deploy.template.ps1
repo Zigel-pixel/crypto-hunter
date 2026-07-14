@@ -24,6 +24,9 @@ $LockPath = Join-Path $RuntimeDir "deployment.lock"
 $ReportDir = Join-Path $RuntimeDir "reports"
 $LogDir = Join-Path $ProductionDir "logs\deployment"
 $BotLog = Join-Path $ProductionDir "logs\bot.log"
+$AtomicHelper = Join-Path $PSScriptRoot "atomic_files.ps1"
+if (-not (Test-Path -LiteralPath $AtomicHelper)) { throw "Atomic file helper is missing." }
+. $AtomicHelper
 
 function Write-DeployLog([string]$Stage, [string]$Message) {
     $safe = $Message -replace '(?i)(token|api[_ -]?key|secret|password)\s*[:=]\s*\S+', '[REDACTED]'
@@ -75,16 +78,12 @@ function Set-StateValue([object]$State, [string]$Name, [object]$Value) {
     if ($State.PSObject.Properties[$Name]) { $State.$Name = $Value }
     else { $State | Add-Member -NotePropertyName $Name -NotePropertyValue $Value }
 }
-function Replace-Atomic([string]$Temporary, [string]$Destination) {
-    if (Test-Path -LiteralPath $Destination) { [IO.File]::Replace($Temporary, $Destination, $null) }
-    else { [IO.File]::Move($Temporary, $Destination) }
-}
 function Save-State([object]$State) {
     $temporary = "$StatePath.tmp"
     try {
         $json = $State | ConvertTo-Json -Depth 6
         [IO.File]::WriteAllText($temporary, $json, (New-Object Text.UTF8Encoding($false)))
-        Replace-Atomic $temporary $StatePath
+        Replace-FileAtomic -TemporaryPath $temporary -DestinationPath $StatePath
     } catch {
         Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue
         throw
@@ -95,7 +94,7 @@ function Set-ActivePython([string]$PythonPath) {
     $pointer = Join-Path $RuntimeDir 'active-python.txt'; $temporary = "$pointer.tmp"
     try {
         [IO.File]::WriteAllText($temporary, [IO.Path]::GetFullPath($PythonPath), (New-Object Text.UTF8Encoding($false)))
-        Replace-Atomic $temporary $pointer
+        Replace-FileAtomic -TemporaryPath $temporary -DestinationPath $pointer
     } catch { Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue; throw }
 }
 function Get-RestorePython {

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -14,6 +15,7 @@ from deployment.orchestrator import DeploymentOrchestrator
 from deployment.reporting import DeploymentReportStorage, json_report, markdown_report
 from deployment.state import DeploymentStateStore, deployment_lock
 from deployment.windows import LauncherAction, launcher_action, resolve_restore_python, select_bootstrap_python
+from deployment.atomic_files import atomic_replace
 
 
 class FakeOperations:
@@ -130,6 +132,50 @@ class DeploymentStateTests(unittest.TestCase):
             path = Path(directory) / "deploy.lock"
             with deployment_lock(path):
                 with self.assertRaises(InstanceAlreadyRunning), deployment_lock(path): pass
+
+
+class AtomicFileReplacementTests(unittest.TestCase):
+    def test_destination_missing_moves_and_verifies(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); temporary = root / "state.tmp"; destination = root / "state.json"
+            temporary.write_text("new", encoding="utf-8")
+            atomic_replace(temporary, destination)
+            self.assertEqual(destination.read_text(encoding="utf-8"), "new")
+            self.assertFalse(temporary.exists())
+
+    def test_existing_destination_replaced_and_backup_cleaned(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); temporary = root / "state.tmp"; destination = root / "state.json"; backup = root / "state.json.atomic-backup"
+            temporary.write_text("new", encoding="utf-8"); destination.write_text("old", encoding="utf-8"); backup.write_text("stale", encoding="utf-8")
+            atomic_replace(temporary, destination)
+            self.assertEqual(destination.read_text(encoding="utf-8"), "new")
+            self.assertFalse(backup.exists())
+
+    def test_missing_temporary_refuses_without_touching_original(self):
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "state.json"; destination.write_text("old", encoding="utf-8")
+            with self.assertRaises(FileNotFoundError): atomic_replace(Path(directory) / "missing.tmp", destination)
+            self.assertEqual(destination.read_text(encoding="utf-8"), "old")
+
+    def test_replacement_failure_restores_original_and_cleans_temporary(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); temporary = root / "state.tmp"; destination = root / "state.json"; backup = root / "state.json.atomic-backup"
+            temporary.write_text("candidate", encoding="utf-8"); destination.write_text("original", encoding="utf-8")
+            def fail_after_backup(source, target, operation_backup):
+                os.replace(target, operation_backup)
+                raise OSError("simulated replace failure")
+            with self.assertRaises(OSError): atomic_replace(temporary, destination, fail_after_backup)
+            self.assertEqual(destination.read_text(encoding="utf-8"), "original")
+            self.assertFalse(temporary.exists()); self.assertFalse(backup.exists())
+
+    def test_partial_candidate_is_removed_before_original_restore(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); temporary = root / "pointer.tmp"; destination = root / "pointer.txt"
+            temporary.write_text("candidate", encoding="utf-8"); destination.write_text("previous", encoding="utf-8")
+            def fail_after_candidate(source, target, backup):
+                os.replace(target, backup); os.replace(source, target); raise OSError("verification failure")
+            with self.assertRaises(OSError): atomic_replace(temporary, destination, fail_after_candidate)
+            self.assertEqual(destination.read_text(encoding="utf-8"), "previous")
 
 
 class DeploymentHealthTests(unittest.TestCase):
