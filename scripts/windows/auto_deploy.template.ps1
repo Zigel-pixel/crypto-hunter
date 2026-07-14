@@ -130,26 +130,81 @@ function Get-BotProcesses {
         $command.Contains($quoted) -or $command -match ('(^|\s)' + [regex]::Escape($main.Replace('/', '\')) + '(\s|$)')
     })
 }
+function Get-ActivePython {
+    $pointer = Join-Path $RuntimeDir 'active-python.txt'
+    $default = Join-Path $ProductionDir '.venv\Scripts\python.exe'
+    if (Test-Path -LiteralPath $pointer) {
+        $configured = (Get-Content -Raw -LiteralPath $pointer).Trim()
+        if ($configured -and (Test-Path -LiteralPath $configured)) { return [IO.Path]::GetFullPath($configured) }
+    }
+    if (Test-Path -LiteralPath $default) { return [IO.Path]::GetFullPath($default) }
+    throw 'Configured production Python executable is unavailable.'
+}
+function Get-BotProcessTrees {
+    param([string]$ExpectedPython = (Get-ActivePython))
+    $matching = @(Get-BotProcesses)
+    $byPid = @{}
+    foreach ($process in $matching) { $byPid[[int]$process.ProcessId] = $process }
+    $roots = @($matching | Where-Object { -not $byPid.ContainsKey([int]$_.ParentProcessId) })
+    $expected = [IO.Path]::GetFullPath($ExpectedPython)
+    $trees = @()
+    foreach ($root in $roots) {
+        $members = @($root)
+        $pending = New-Object 'System.Collections.Generic.Queue[int]'
+        $pending.Enqueue([int]$root.ProcessId)
+        while ($pending.Count -gt 0) {
+            $parent = $pending.Dequeue()
+            foreach ($child in @($matching | Where-Object { [int]$_.ParentProcessId -eq $parent })) {
+                $members += $child; $pending.Enqueue([int]$child.ProcessId)
+            }
+        }
+        $rootExecutable = if ($root.ExecutablePath) { [IO.Path]::GetFullPath($root.ExecutablePath) } else { '' }
+        $trees += [pscustomobject]@{
+            Root=$root
+            Processes=$members
+            ExpectedRoot=[string]::Equals($rootExecutable, $expected, [StringComparison]::OrdinalIgnoreCase)
+        }
+    }
+    return $trees
+}
+function Test-SingleBotProcessTree {
+    $trees = @(Get-BotProcessTrees)
+    foreach ($tree in $trees) {
+        $childPids = @($tree.Processes | Where-Object { $_.ProcessId -ne $tree.Root.ProcessId } | ForEach-Object ProcessId)
+        Write-DeployLog 'process' "Production tree root PID $($tree.Root.ProcessId); child PIDs $($childPids -join ','); expected root executable: $($tree.ExpectedRoot)."
+    }
+    return $trees.Count -eq 1 -and $trees[0].ExpectedRoot
+}
 function Test-BotHealth {
     Start-Sleep -Seconds $HealthSeconds
-    $processes = @(Get-BotProcesses)
-    if ($processes.Count -ne 1) { return $false }
+    if (-not (Test-SingleBotProcessTree)) { return $false }
     if (-not (Test-Path -LiteralPath $BotLog)) { return $false }
     $tail = (Get-Content -LiteralPath $BotLog -Tail 120) -join "`n"
     return $tail -match '(?i)polling|Starting Crypto Hunter' -and $tail -notmatch 'Traceback \(most recent call last\)'
 }
 function Stop-ProductionBot {
     Stop-ScheduledTask -TaskName $BotTaskName -ErrorAction SilentlyContinue
-    foreach ($process in @(Get-BotProcesses)) { Write-DeployLog 'process' "Stopping production PID $($process.ProcessId)."; Stop-Process -Id $process.ProcessId -Force -ErrorAction Stop }
+    $processes = @(Get-BotProcesses)
+    $byPid = @{}; foreach ($process in $processes) { $byPid[[int]$process.ProcessId] = $process }
+    $ordered = foreach ($process in $processes) {
+        $depth = 0; $parent = [int]$process.ParentProcessId
+        while ($byPid.ContainsKey($parent)) { $depth++; $parent = [int]$byPid[$parent].ParentProcessId }
+        [pscustomobject]@{ Process=$process; Depth=$depth }
+    }
+    foreach ($entry in @($ordered | Sort-Object Depth -Descending)) {
+        $process = $entry.Process
+        Write-DeployLog 'process' "Stopping exact production-tree PID $($process.ProcessId), parent PID $($process.ParentProcessId)."
+        Stop-Process -Id $process.ProcessId -Force -ErrorAction SilentlyContinue
+    }
     $limit = (Get-Date).AddSeconds(15)
-    while (@(Get-BotProcesses).Count -gt 0 -and (Get-Date) -lt $limit) { Start-Sleep -Milliseconds 250 }
-    if (@(Get-BotProcesses).Count -ne 0) { throw 'Exact production processes did not exit before start.' }
+    while (@(Get-BotProcessTrees).Count -gt 0 -and (Get-Date) -lt $limit) { Start-Sleep -Milliseconds 250 }
+    if (@(Get-BotProcessTrees).Count -ne 0) { throw 'Exact production process trees did not exit before start.' }
 }
 function Start-ProductionBot {
     Stop-ProductionBot
     Start-ScheduledTask -TaskName $BotTaskName
     Start-Sleep -Seconds $WarmupSeconds
-    if (@(Get-BotProcesses).Count -ne 1) { throw 'Production start did not create exactly one matching process.' }
+    if (-not (Test-SingleBotProcessTree)) { throw 'Production start did not create exactly one valid process tree.' }
 }
 function Restore-Production([string]$Commit, [string]$RestorePython) {
     $result = [ordered]@{ source_restored=$false; pointer_restored=$false; processes_cleared=$false; health_restored=$false; success=$false }

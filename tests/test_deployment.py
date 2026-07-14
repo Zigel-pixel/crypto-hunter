@@ -8,7 +8,7 @@ import unittest
 from unittest.mock import AsyncMock, patch
 
 from app.utils.single_instance import InstanceAlreadyRunning
-from deployment.health import ProcessInfo, evaluate_health, matching_production_processes
+from deployment.health import ProcessInfo, evaluate_health, logical_production_instances, matching_production_processes
 from deployment.models import DeploymentReport, DeploymentState, DeploymentStatus, HealthStatus, RollbackResult, StageResult
 from deployment.notifications import send_admin_notification
 from deployment.orchestrator import DeploymentOrchestrator
@@ -193,6 +193,51 @@ class DeploymentHealthTests(unittest.TestCase):
         unrelated = ProcessInfo(11, f'python "{root.parent / (root.name + "-copy") / "main.py"}"')
         worker = ProcessInfo(12, f'python "{root / "worker.py"}"')
         self.assertEqual(matching_production_processes((exact, unrelated, worker), root), (exact,))
+
+    def test_standalone_process_is_one_logical_instance(self):
+        root = Path.cwd(); python = root / ".venv/Scripts/python.exe"
+        process = ProcessInfo(10, f'"{python}" "{root / "main.py"}"', 5, str(python))
+        instances = logical_production_instances((process,), root, python)
+        self.assertEqual(len(instances), 1); self.assertTrue(instances[0].expected_root)
+
+    def test_windows_314_venv_launcher_and_interpreter_are_one_instance(self):
+        root = Path.cwd(); venv = root / ".deployment/venvs/commit/Scripts/python.exe"
+        system = Path("C:/Users/test/AppData/Local/Python/pythoncore-3.14-64/python.exe")
+        launcher = ProcessInfo(20, f'"{venv}" "{root / "main.py"}"', 4, str(venv))
+        interpreter = ProcessInfo(21, f'"{system}" "{root / "main.py"}"', 20, str(system))
+        instances = logical_production_instances((launcher, interpreter), root, venv)
+        self.assertEqual(len(instances), 1); self.assertEqual({p.pid for p in instances[0].processes}, {20, 21})
+        self.assertEqual(evaluate_health((launcher, interpreter), root, "Run polling", expected_python=venv).status, HealthStatus.HEALTHY)
+
+    def test_nested_matching_children_remain_one_instance(self):
+        root = Path.cwd(); python = root / ".venv/Scripts/python.exe"; main = root / "main.py"
+        processes = (
+            ProcessInfo(30, f'"{python}" "{main}"', 1, str(python)),
+            ProcessInfo(31, f'python "{main}"', 30, "C:/Python/python.exe"),
+            ProcessInfo(32, f'python "{main}"', 31, "C:/Python/python.exe"),
+        )
+        instances = logical_production_instances(processes, root, python)
+        self.assertEqual(len(instances), 1); self.assertEqual(len(instances[0].processes), 3)
+
+    def test_independent_roots_are_duplicates(self):
+        root = Path.cwd(); python = root / ".venv/Scripts/python.exe"; main = root / "main.py"
+        processes = (ProcessInfo(40, f'python "{main}"', 1, str(python)), ProcessInfo(41, f'python "{main}"', 2, str(python)))
+        self.assertEqual(evaluate_health(processes, root, "polling", expected_python=python).status, HealthStatus.DUPLICATE_PROCESS)
+
+    def test_unrelated_main_and_wrong_root_executable_are_rejected(self):
+        root = Path.cwd(); expected = root / ".venv/Scripts/python.exe"; wrong = Path("C:/Python/python.exe")
+        other = ProcessInfo(50, f'python "{root.parent / "other" / "main.py"}"', 1, str(expected))
+        production = ProcessInfo(51, f'python "{root / "main.py"}"', 1, str(wrong))
+        instances = logical_production_instances((other, production), root, expected)
+        self.assertEqual(len(instances), 1)
+        self.assertEqual(tuple(process.pid for process in instances[0].processes), (51,))
+        self.assertEqual(evaluate_health((other, production), root, "polling", expected_python=expected).status, HealthStatus.FAILED_START)
+
+    def test_zero_before_start_and_one_logical_instance_afterward(self):
+        root = Path.cwd(); python = root / ".venv/Scripts/python.exe"; main = root / "main.py"
+        self.assertEqual(logical_production_instances((), root, python), ())
+        started = ProcessInfo(60, f'"{python}" "{main}"', 2, str(python))
+        self.assertEqual(len(logical_production_instances((started,), root, python)), 1)
 
 
 class RollbackResultTests(unittest.TestCase):

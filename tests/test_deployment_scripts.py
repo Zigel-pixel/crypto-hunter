@@ -89,12 +89,24 @@ class DeploymentScriptAuditTests(unittest.TestCase):
         self.assertIn("Get-RestorePython", source)
         self.assertIn("default production Python", source)
 
-    def test_process_reconciliation_requires_zero_then_exactly_one(self):
+    def test_process_reconciliation_uses_one_logical_tree(self):
         source = self.scripts["auto_deploy.template.ps1"]
-        self.assertIn("Exact production processes did not exit before start", source)
-        self.assertIn("did not create exactly one matching process", source)
+        self.assertIn("Exact production process trees did not exit before start", source)
+        self.assertIn("did not create exactly one valid process tree", source)
+        self.assertIn("ParentProcessId", source)
+        self.assertIn("ExecutablePath", source)
+        self.assertIn("ExpectedRoot", source)
+        self.assertIn("Test-SingleBotProcessTree", source)
         self.assertIn("[regex]::Escape", source)
         self.assertNotIn("*CryptoHunter*", source)
+
+    def test_exact_process_tree_cleanup_is_child_first_and_path_scoped(self):
+        source = self.scripts["auto_deploy.template.ps1"]
+        stop = source[source.index("function Stop-ProductionBot"):source.index("function Start-ProductionBot")]
+        self.assertIn("Get-BotProcesses", stop)
+        self.assertIn("Sort-Object Depth -Descending", stop)
+        self.assertIn("Stop-Process -Id $process.ProcessId", stop)
+        self.assertNotIn("Get-Process python", stop)
 
     def test_success_messages_follow_checked_operations(self):
         install = self.scripts["install_tasks.template.ps1"]
