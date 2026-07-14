@@ -239,6 +239,40 @@ English is the fallback language. Ukrainian is supported for the main menu, sess
 - Broaden safe token discovery, deployment, and monitoring
 - Consider PostgreSQL when scaling requires it
 
+## Windows Automatic Deployment
+
+The repository contains sanitized templates under `scripts/windows`; machine-specific copies remain untracked. The deployment-only production clone is expected at a locally configured path and must stay on `feat/market-core` with the configured GitHub origin and no tracked changes. A five-minute Task Scheduler check fetches the branch but sends no notification and performs no restart when the commit is unchanged.
+
+For a new fast-forward commit, `auto_deploy.ps1` creates a detached candidate worktree and a versioned virtual environment under the ignored local `.deployment` directory. It installs `requirements.txt` plus `requirements-dev.txt`, compiles the candidate, and runs the full pytest suite while the old bot continues running. Only a verified candidate may stop the scheduled bot task. Production then fast-forwards, the launcher atomically switches to the candidate Python environment, and the task restarts.
+
+Post-start health requires exactly one matching `main.py` process under the production directory, a stable health window, a polling/startup log marker, and no immediate traceback or crash loop. Smoke Telegram E2E is the default rollback gate. Full E2E runs only after smoke passes; its failure marks the deployment unhealthy but does not roll back by default because Telegram and public-provider outages can be transient. Policies are locally configurable with `RollbackOnSmokeE2EFailure` and `RollbackOnFullE2EFailure`.
+
+The deployment uses the already authorized local Telethon session. It never requests an unattended login code. Missing authorization blocks post-deployment E2E and produces an administrator notification. The one-shot notifier uses the existing `QA_BOT_TOKEN` and `QA_ADMIN_TELEGRAM_ID`; it does not start another QA polling process. Notifications contain shortened commits and sanitized summaries, never secrets, logs, session data, or databases.
+
+Deployment state, reports, candidate worktrees, environments, and locks live under the ignored local `.deployment`/configured deployment paths. A failed blocking commit is recorded and not retried every five minutes until a different remote commit appears or the local clear script is explicitly run. The QA bot exposes read-only `/deploy_status`, `/deploy_last`, `/deploy_reports`, and `/deploy_failed_commit`; it cannot deploy, roll back, or execute shell commands.
+
+### Local installation
+
+1. In the production clone, install production and test requirements: `python -m pip install -r requirements.txt -r requirements-dev.txt`.
+2. Copy the repository templates to a separate review directory and customize only the configuration block at the top.
+3. Run `setup_local.template.ps1 -ConfirmSetup` from the template directory. Existing generated local scripts receive timestamped backups.
+4. Review `C:\CryptoHunterProd\run_bot.ps1` and `auto_deploy.ps1`. Do not place tokens or session values in either file.
+5. Verify the existing local `.env` and authorized Telethon session without printing their contents.
+6. Run `install_tasks.template.ps1 -ConfirmInstall` manually from an elevated PowerShell window. It uses Task Scheduler XML with `PT5M` repetition and `IgnoreNew`; Codex never runs it automatically.
+7. Run the local `check_deployment.ps1` to inspect safe state/report filenames. Trigger the auto-deploy task manually once while monitoring local logs.
+
+To disable automatic deployment safely, disable `Crypto Hunter Auto Deploy` in Task Scheduler; this does not stop the bot task. To remove both generated tasks, explicitly run `uninstall_tasks.template.ps1 -ConfirmUninstall`. To clear only repeated-failure suppression after manual investigation, run the local `clear_failed_deployment.ps1 -ConfirmClear`.
+
+### Manual recovery
+
+- Leave the auto-deploy task disabled while investigating.
+- Confirm the production branch, origin, clean tracked tree, current commit, active Python pointer, and exactly one matching bot process.
+- Review only sanitized deployment reports/logs; never send the local environment, database, or Telethon session.
+- If automatic rollback failed, restore the recorded previous commit with a validated clean tree, restore the previous active-Python pointer, and start the bot task once. Confirm health before re-enabling auto deploy.
+- A diverged branch, dirty tracked tree, broken rollback, or unauthorized Telethon session requires manual intervention rather than force/reset automation.
+
+Expected downtime is limited to the verified source/environment switch, scheduled-task restart, and health window. Candidate dependency installation and tests occur before the working bot is stopped. This repository provides and tests the pipeline, but no real unattended deployment or scheduled-task modification is performed during development verification.
+
 ## License
 
 No license has been selected yet.

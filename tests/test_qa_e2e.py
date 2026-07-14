@@ -150,5 +150,5 @@ class E2EBoundaryTests(unittest.TestCase):
 
     def test_sensitive_artifacts_are_ignored(self) -> None:
         ignore = Path(".gitignore").read_text(encoding="utf-8")
-        for pattern in ("*.session", "*.session-journal", "qa/e2e_sessions/", "qa/e2e_reports/", "qa/e2e_artifacts/"):
+        for pattern in ("*.session", "*.session-journal", "qa/e2e_sessions/", "qa/e2e_reports/", "qa/e2e_artifacts/", ".crypto-hunter-e2e.lock"):
             self.assertIn(pattern, ignore)

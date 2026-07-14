@@ -37,6 +37,8 @@ class QAConfig:
     real_provider_checks: bool = False
     github_issues_enabled: bool = False
     github_repository: str = "Zigel-pixel/crypto-hunter"
+    deployment_state_path: Path = Path(".deployment/state.json")
+    deployment_reports_dir: Path = Path(".deployment/reports")
 
 
 def load_qa_config(*, load_env_file: bool = True) -> QAConfig:
@@ -63,4 +65,6 @@ def load_qa_config(*, load_env_file: bool = True) -> QAConfig:
         real_provider_checks=_boolean("QA_REAL_PROVIDER_CHECKS"),
         github_issues_enabled=_boolean("QA_GITHUB_ISSUES_ENABLED"),
         github_repository=os.getenv("QA_GITHUB_REPOSITORY", "Zigel-pixel/crypto-hunter").strip() or "Zigel-pixel/crypto-hunter",
+        deployment_state_path=Path(os.getenv("DEPLOYMENT_STATE_PATH", ".deployment/state.json").strip() or ".deployment/state.json"),
+        deployment_reports_dir=Path(os.getenv("DEPLOYMENT_REPORTS_DIR", ".deployment/reports").strip() or ".deployment/reports"),
     )

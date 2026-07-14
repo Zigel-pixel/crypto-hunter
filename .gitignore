@@ -38,6 +38,7 @@ env/
 # Local runtime files
 .crypto-hunter.lock
 .crypto-hunter-qa.lock
+.crypto-hunter-e2e.lock
 
 # Generated internal QA artifacts
 qa/reports/
@@ -59,6 +60,19 @@ e2e-*.jpg
 run_bot.ps1
 update_bot.ps1
 auto_deploy.ps1
+check_deployment.ps1
+clear_failed_deployment.ps1
+install_tasks.ps1
+uninstall_tasks.ps1
+setup_local.ps1
+
+# Generated deployment runtime data
+deployment/state.json
+deployment/*.lock
+deployment/reports/
+deployment/logs/
+.deployment/
+deployment-*.log
 
 # Local database
 crypto.db

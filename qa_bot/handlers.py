@@ -18,10 +18,12 @@ from qa_e2e.config import E2EConfigError, load_e2e_config
 from qa_e2e.scenarios import build_scenarios as build_e2e_scenarios
 from qa_e2e.client import TelegramE2EClient
 from qa_e2e.storage import E2EStorage, PROMPT_RE
+from deployment.reporting import DeploymentReportStorage
+from deployment.state import DeploymentStateStore
 
 logger = logging.getLogger("crypto_hunter.qa")
 SUITE_COMMANDS = {"run_all": "all", "run_smoke": "smoke", "run_localization": "localization", "run_live": "live", "run_favorites": "favorites", "run_alerts": "alerts", "run_ai": "ai", "run_wallets": "wallets"}
-HELP = "Commands: /run_all /run_smoke /run_localization /run_live /run_favorites /run_alerts /run_ai /run_wallets /status /last_report /list_scenarios /cancel /clear_reports /codex_prompt /e2e_status /e2e_list /e2e_last_report /e2e_codex_prompt"
+HELP = "Commands: /run_all /run_smoke /run_localization /run_live /run_favorites /run_alerts /run_ai /run_wallets /status /last_report /list_scenarios /cancel /clear_reports /codex_prompt /e2e_status /e2e_list /e2e_last_report /e2e_codex_prompt /deploy_status /deploy_last /deploy_reports /deploy_failed_commit"
 
 
 async def authorize_event(event: types.Message | types.CallbackQuery, admin_id: int) -> bool:
@@ -197,5 +199,34 @@ def build_router(config: QAConfig, runner: ScenarioRunner, storage: ReportStorag
             else: await message.answer("No Telegram E2E failure prompt is available.")
         except E2EConfigError:
             await message.answer("Telegram E2E configuration is incomplete.")
+
+    def deployment_context():
+        state_path = config.deployment_state_path.resolve()
+        return DeploymentStateStore(state_path, state_path.parent), DeploymentReportStorage(config.deployment_reports_dir)
+
+    @router.message(Command("deploy_status"))
+    async def deploy_status(message: types.Message) -> None:
+        if not await authorized(message): return
+        state, _ = deployment_context(); value = state.load()
+        await message.answer(f"Deployment status: {value.last_deployment_status or 'not recorded'}\nLast deployed commit: {(value.last_successfully_deployed_commit or 'none')[:12]}\nLast smoke E2E: {value.last_smoke_e2e_status or 'not recorded'}\nLast full E2E: {value.last_full_e2e_status or 'not recorded'}")
+
+    @router.message(Command("deploy_last"))
+    async def deploy_last(message: types.Message) -> None:
+        if not await authorized(message): return
+        _, reports = deployment_context(); path = reports.latest()
+        if path: await message.answer_document(FSInputFile(path), caption=path.name)
+        else: await message.answer("No deployment report is available.")
+
+    @router.message(Command("deploy_reports"))
+    async def deploy_reports(message: types.Message) -> None:
+        if not await authorized(message): return
+        _, reports = deployment_context(); files = reports.reports()[:10]
+        await message.answer("\n".join(f"• {path.name}" for path in files) if files else "No deployment reports are available.")
+
+    @router.message(Command("deploy_failed_commit"))
+    async def deploy_failed_commit(message: types.Message) -> None:
+        if not await authorized(message): return
+        state, _ = deployment_context(); failed = state.load().failed_commit
+        await message.answer(f"Failed commit retry block: {failed[:12]}" if failed else "No commit is currently blocked from automatic retry.")
 
     return router

@@ -12,6 +12,7 @@ from qa_e2e.config import E2EConfigError, load_e2e_config
 from qa_e2e.runner import E2ERunner, exit_code
 from qa_e2e.scenarios import build_scenarios
 from qa_e2e.storage import E2EStorage
+from app.utils.single_instance import InstanceAlreadyRunning, SingleInstanceLock
 
 SUITES = ("smoke", "localization", "live", "favorites", "alerts", "ai", "wallets", "all")
 
@@ -61,7 +62,14 @@ async def execute(args: argparse.Namespace) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     try:
-        return asyncio.run(execute(parser().parse_args(argv)))
+        args = parser().parse_args(argv)
+        if args.command == "run":
+            with SingleInstanceLock(Path(__file__).resolve().parent.parent / ".crypto-hunter-e2e.lock"):
+                return asyncio.run(execute(args))
+        return asyncio.run(execute(args))
+    except InstanceAlreadyRunning:
+        print("Another Telegram E2E run is already active.", file=sys.stderr)
+        return 3
     except (E2EConfigError, AuthorizationError) as exc:
         print(f"E2E command refused ({type(exc).__name__}).", file=sys.stderr)
         return 2

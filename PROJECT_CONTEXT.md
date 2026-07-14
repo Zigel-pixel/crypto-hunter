@@ -453,3 +453,16 @@ python -m qa_e2e run favorites
 python -m qa_e2e run live
 python -m qa_e2e run all
 ```
+
+## Safe Windows deployment and post-deploy QA (July 2026)
+
+- `deployment/` provides typed deployment/state/health/reporting/notification primitives. State writes use a same-directory temporary file plus atomic replacement, malformed state falls back safely, and the deployment advisory lock is separate from bot, QA-bot, and E2E locks.
+- `DeploymentOrchestrator` is operation-injected for deterministic tests. It enforces candidate verification before production stop/update, smoke-first E2E, configurable rollback, full-E2E degraded success by default, rollback health reporting, and suppression of a previously blocked commit.
+- Sanitized templates in `scripts/windows` cover the restart-safe bot launcher, candidate-worktree auto deploy, Task Scheduler XML install/removal, safe status inspection, failed-commit clearing, and backup-before-copy local setup. Templates contain no private paths or credentials and are never executed automatically by Codex.
+- Candidate verification uses a detached Git worktree and per-commit virtual environment. It installs explicit production and test requirements, then runs compileall and the complete pytest suite before production is stopped. The production branch updates only through validated fast-forward ancestry.
+- `Live` production health checks are process/path scoped: exactly one production `main.py`, stable health window, startup/polling log marker, no immediate traceback, and crash-loop protection. Rollback restores the validated old commit and previous Python pointer, restarts once, and verifies health.
+- Real E2E runs smoke first and full second using the existing local authorized session. Missing authorization is a configuration failure; unattended scripts never request login codes. Smoke failure rolls back by default; full-suite failure keeps the healthy deployment running but marks it `deployed_with_e2e_failures` by default.
+- One-shot QA notifications use only the existing admin token/ID environment configuration and bounded retries. Notification failure is non-fatal and no second QA polling process starts. Read-only commands are `/deploy_status`, `/deploy_last`, `/deploy_reports`, and `/deploy_failed_commit`; no deploy/shell/rollback Telegram command exists.
+- Runtime state, reports, logs, candidate data, virtual environments, and locks are ignored. `requirements-dev.txt` explicitly provides pytest for unattended candidate verification.
+
+Remaining limitation: the scripts and process/log checks are extensively mocked/audited but have not been executed against the production clone or Task Scheduler during Codex implementation. The first local installation and deployment must be supervised using the README checklist.
