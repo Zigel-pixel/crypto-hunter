@@ -19,7 +19,7 @@ from app.handlers.wallet import router as wallet_router
 from app.middlewares.live_cleanup import LiveCleanupMiddleware
 from app.middlewares.user_session import UserSessionMiddleware
 from app.services.alert_monitor_service import monitor_alerts
-from app.services.live_market_service import live_task_manager
+from app.services.live_market_service import live_chart_manager, live_task_manager
 from app.utils.config import BOT_TOKEN
 from app.utils.single_instance import InstanceAlreadyRunning, SingleInstanceLock
 
@@ -51,6 +51,7 @@ async def main() -> None:
         await dp.start_polling(bot)
     finally:
         await live_task_manager.stop_all()
+        await live_chart_manager.stop_all()
         alert_monitor_task.cancel()
         with suppress(asyncio.CancelledError):
             await alert_monitor_task

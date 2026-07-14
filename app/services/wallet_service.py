@@ -12,7 +12,7 @@ import aiosqlite
 
 from app.integrations.blockchain import bnb, bitcoin, ethereum, solana, tron
 from app.integrations.blockchain.models import WalletSnapshot
-from app.models.wallet import StoredWallet
+from app.models.wallet import StoredWallet, WalletProfile
 from app.models.wallet_address import AddressFamily
 from app.models.wallet_discovery import WalletDiscoveryResult
 from app.services.wallet_address_service import detect_wallet_address
@@ -157,6 +157,48 @@ async def list_wallets(telegram_id: int) -> list[StoredWallet]:
         )
         rows = await cursor.fetchall()
     return [StoredWallet(network=row[0], address=row[1]) for row in rows]
+
+
+async def list_wallet_profiles(telegram_id: int) -> list[WalletProfile]:
+    async with aiosqlite.connect(DB_NAME) as db:
+        cursor = await db.execute("""
+            SELECT p.id,p.address,p.address_family,p.label,p.last_refresh_at,n.network
+            FROM wallet_profiles p LEFT JOIN wallet_networks n ON n.wallet_id=p.id
+            WHERE p.telegram_id=? ORDER BY p.created_at,p.id,n.network
+        """, (telegram_id,))
+        rows = await cursor.fetchall()
+    grouped: dict[int, list] = {}
+    for row in rows:
+        item = grouped.setdefault(row[0], [*row[:5], []])
+        if row[5]:
+            item[5].append(row[5])
+    return [WalletProfile(item[0], item[1], item[2], item[3], tuple(item[5]), item[4]) for item in grouped.values()]
+
+
+async def get_wallet_profile(telegram_id: int, profile_id: int) -> WalletProfile | None:
+    return next((item for item in await list_wallet_profiles(telegram_id) if item.id == profile_id), None)
+
+
+async def rename_wallet_profile(telegram_id: int, profile_id: int, label: str) -> bool:
+    cleaned = " ".join(label.split())
+    if not 1 <= len(cleaned) <= 40:
+        raise ValueError("Wallet label must contain 1-40 characters")
+    async with aiosqlite.connect(DB_NAME) as db:
+        cursor = await db.execute("UPDATE wallet_profiles SET label=? WHERE id=? AND telegram_id=?", (cleaned, profile_id, telegram_id))
+        await db.commit()
+        return cursor.rowcount > 0
+
+
+async def delete_wallet_profile(telegram_id: int, profile_id: int) -> bool:
+    async with aiosqlite.connect(DB_NAME) as db:
+        profile = await (await db.execute("SELECT address FROM wallet_profiles WHERE id=? AND telegram_id=?", (profile_id, telegram_id))).fetchone()
+        if profile is None:
+            return False
+        await db.execute("DELETE FROM wallet_networks WHERE wallet_id=?", (profile_id,))
+        cursor = await db.execute("DELETE FROM wallet_profiles WHERE id=? AND telegram_id=?", (profile_id, telegram_id))
+        await db.execute("DELETE FROM wallets WHERE telegram_id=? AND address=? COLLATE NOCASE", (telegram_id, profile[0]))
+        await db.commit()
+        return cursor.rowcount > 0
 
 
 async def remove_wallet(telegram_id: int, network: str, address: str) -> bool:

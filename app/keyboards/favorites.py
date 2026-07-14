@@ -44,6 +44,12 @@ def build_watchlist_search_results(
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
+def build_popular_asset_keyboard(assets: list[AssetDefinition], language: str = "English") -> InlineKeyboardMarkup:
+    buttons = [[InlineKeyboardButton(text=f"{asset.name} ({asset.symbol})", callback_data=f"watchlist:add_asset:{asset.provider_id}")] for asset in assets]
+    buttons.append([InlineKeyboardButton(text="❌ Скасувати" if language == "Ukrainian" else "❌ Cancel", callback_data="watchlist:overview")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
 def build_watchlist_remove_keyboard(
     assets: list[AssetDefinition],
 ) -> InlineKeyboardMarkup:

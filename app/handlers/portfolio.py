@@ -5,6 +5,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import BufferedInputFile
 
 from app.keyboards.main import action_labels, build_main_keyboard
+from app.handlers.common import user_main_keyboard
 from app.keyboards.portfolio import (
     build_portfolio_keyboard,
     build_portfolio_asset_keyboard,
@@ -235,4 +236,4 @@ async def remove_selected_asset(message: types.Message, state: FSMContext) -> No
 )
 async def back_to_main(message: types.Message, state: FSMContext) -> None:
     await state.clear()
-    await message.answer("↩ Returned to main menu.", reply_markup=build_main_keyboard())
+    await message.answer("↩ Returned to main menu.", reply_markup=await user_main_keyboard(message.from_user.id))

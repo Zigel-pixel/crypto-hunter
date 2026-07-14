@@ -69,6 +69,16 @@ async def get_all_alerts() -> list[Alert]:
     ]
 
 
+async def get_alert(alert_id: int, telegram_id: int) -> dict[str, object] | None:
+    async with aiosqlite.connect(DB_NAME) as db:
+        cursor = await db.execute(
+            "SELECT id, coin, condition, target_price, created_at FROM alerts WHERE id=? AND telegram_id=?",
+            (alert_id, telegram_id),
+        )
+        row = await cursor.fetchone()
+    return None if row is None else {"id": row[0], "coin": row[1], "condition": row[2], "target_price": row[3], "created_at": row[4]}
+
+
 def is_alert_triggered(alert: Alert, current_price: float) -> bool:
     if alert.condition == ">":
         return current_price >= alert.target_price

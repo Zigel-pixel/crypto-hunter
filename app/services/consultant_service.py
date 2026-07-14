@@ -7,6 +7,7 @@ import logging
 from collections import Counter
 
 from app.integrations.blockchain.models import WalletSnapshot
+from app.models.consultant import ConsultantIntent
 from app.models.news import NewsItem
 from app.services.market_service import (
     CoinSnapshot,
@@ -17,11 +18,8 @@ from app.services.market_service import (
 )
 from app.services.news_service import get_news
 from app.services.wallet_service import get_wallet, list_wallets
+from app.services.consultant_intent_service import classify_query
 
-DISCLAIMER = (
-    "⚠️ Це інформаційний аналіз, не персональна фінансова рекомендація. "
-    "Криптоактиви високоризикові."
-)
 NEWS_LIMIT = 7
 STRONG_MOVE_PERCENT = 5.0
 MODERATE_MOVE_PERCENT = 2.0
@@ -38,33 +36,110 @@ NEGATIVE_WORDS = {
 logger = logging.getLogger(__name__)
 
 
-async def build_market_analysis(question: str | None = None) -> str:
+async def build_market_analysis(question: str | None = None, language: str = "Ukrainian") -> str:
+    if question:
+        return await answer_consultant_question(question)
     (_, snapshots), news = await asyncio.gather(
         fetch_market_snapshots(), get_news(NEWS_LIMIT)
     )
     if not snapshots:
-        return (
-            "❌ Ринкові дані тимчасово недоступні. Спробуйте пізніше.\n\n"
-            f"{DISCLAIMER}"
-        )
+        return ("❌ Ринкові дані тимчасово недоступні. Спробуйте пізніше."
+                if language == "Ukrainian" else "❌ Market data is temporarily unavailable. Please try again later.")
 
-    lines = ["🤖 AI-консультант", "", "📊 Поточна картина ринку"]
+    uk = language == "Ukrainian"
+    lines = ["🤖 AI-консультант" if uk else "🤖 AI Consultant", "", "📊 Поточна картина ринку" if uk else "📊 Current market"]
     for coin_id in ("bitcoin", "ethereum", "solana", "binancecoin"):
         snapshot = snapshots.get(coin_id)
         if snapshot is not None:
             lines.append(_format_market_line(snapshot))
 
     sentiment, evidence = _news_sentiment(news)
-    lines.extend(["", f"📰 Новинний фон: {sentiment}"])
+    lines.extend(["", f"📰 Новинний фон: {sentiment}" if uk else "📰 News context (original headlines)"])
     if evidence:
         lines.extend(f"• {title}" for title in evidence[:3])
 
     btc = snapshots.get("bitcoin")
-    lines.extend(["", "🧭 Сценарій", _build_scenario(btc, sentiment)])
+    lines.extend(["", "🧭 Сценарій" if uk else "🧭 Scenario", _build_scenario(btc, sentiment) if uk else _build_scenario_en(btc)])
     if question:
         lines.extend(["", "💬 Відповідь", _answer_question(question, snapshots, sentiment)])
-    lines.extend(["", DISCLAIMER])
     return "\n".join(lines)
+
+
+def _build_scenario_en(btc: CoinSnapshot | None) -> str:
+    change = btc.change_24h if btc else None
+    if change is None:
+        return "Price evidence is incomplete, so no reliable signal is available."
+    if change >= STRONG_MOVE_PERCENT:
+        return "BTC has already made a strong daily move. Chasing momentum increases entry risk; wait for confirmation or scale gradually."
+    if change <= -STRONG_MOVE_PERCENT:
+        return "BTC has fallen sharply. A lower price is not proof of a bottom; keep position sizing conservative and preserve cash reserves."
+    return "There is no strong short-term signal. A cautious baseline is staged entries, defined risk, and no leverage."
+
+
+async def answer_consultant_question(question: str, language: str | None = None) -> str:
+    query = classify_query(question, language)
+    uk = query.language == "Ukrainian"
+    if query.intent is ConsultantIntent.STABLECOIN:
+        return _stablecoin_answer(uk)
+    if query.intent is ConsultantIntent.DEFI:
+        return _defi_answer(uk)
+    if query.intent is ConsultantIntent.CONCEPT and not query.assets:
+        return ("🤖 Консультант\n\nУточніть, який термін або криптопродукт ви хочете розібрати. Я поясню принцип роботи, практичне застосування та основні ризики."
+                if uk else "🤖 Consultant\n\nTell me which crypto term or product you want explained. I’ll cover how it works, practical uses, and its main risks.")
+    _, snapshots = await fetch_market_snapshots()
+    snapshots = snapshots or {}
+    if query.intent is ConsultantIntent.COMPARISON:
+        return _comparison_answer(query.assets, snapshots, uk)
+    symbol = query.assets[0] if query.assets else "BTC"
+    coin_id = {"BTC":"bitcoin", "ETH":"ethereum", "SOL":"solana", "BNB":"binancecoin"}.get(symbol)
+    snapshot = snapshots.get(coin_id) if coin_id else None
+    if snapshot is None:
+        return "Зараз недостатньо актуальних даних для надійного висновку." if uk else "There is not enough current data for a reliable conclusion."
+    return _asset_answer(snapshot, query.intent is ConsultantIntent.TRADING_DECISION, uk)
+
+
+def _stablecoin_answer(uk: bool) -> str:
+    if uk:
+        return """🪙 Стейблкоїни
+
+USDT і USDC — централізовані: зручні та ліквідні, але залежать від емітента, резервів, банків і регуляторних рішень. DAI більше спирається на ончейн-заставу, проте теж має ризики смартконтрактів і залежності від централізованих активів.
+
+Основні ризики: втрата прив’язки до $1, непрозорі або недоступні резерви, блокування адрес емітентом, помилка мережі під час переказу, низька ліквідність і ризиковий DeFi-дохід.
+
+Практично: перевіряйте мережу одержувача, диверсифікуйте великі суми між моделями/емітентами та не вважайте високий відсоток безризиковим."""
+    return """🪙 Stablecoins
+
+USDT and USDC are centralized: liquid and convenient, but exposed to issuer, reserve, banking, and regulatory risk. DAI relies more on on-chain collateral, while still carrying smart-contract and centralized-collateral exposure.
+
+Main risks are depegging, inaccessible or unclear reserves, issuer address freezes, using the wrong transfer network, poor liquidity, and risky DeFi yield.
+
+In practice: verify the recipient network, diversify large holdings across models/issuers, and never treat unusually high yield as risk-free."""
+
+
+def _defi_answer(uk: bool) -> str:
+    return ("DeFi — це фінансові сервіси у смартконтрактах без традиційного посередника. Основні ризики: помилки контрактів, злам, ліквідація застави, impermanent loss, маніпуляція оракулами та шахрайські токени. Починайте з малих сум і перевірених протоколів."
+            if uk else "DeFi provides financial services through smart contracts without a traditional intermediary. Core risks include contract bugs, exploits, collateral liquidation, impermanent loss, oracle manipulation, and scam tokens. Start small and use established protocols.")
+
+
+def _comparison_answer(symbols, snapshots, uk: bool) -> str:
+    lines = ["⚖️ Порівняння" if uk else "⚖️ Comparison", ""]
+    ids = {"BTC":"bitcoin", "ETH":"ethereum", "SOL":"solana", "BNB":"binancecoin"}
+    for symbol in symbols[:2]:
+        item = snapshots.get(ids.get(symbol, ""))
+        lines.append(f"• {symbol}: {format_price(item.price)}, 24h {format_percent(item.change_24h)}" if item else f"• {symbol}: N/A")
+    lines.append("\nЦіни за 24 години не визначають кращий довгостроковий актив; порівняйте призначення, децентралізацію, екосистему й допустимий ризик." if uk else "\nA 24-hour move does not determine the better long-term asset; compare purpose, decentralization, ecosystem, and acceptable risk.")
+    return "\n".join(lines)
+
+
+def _asset_answer(snapshot: CoinSnapshot, signal_requested: bool, uk: bool) -> str:
+    change = snapshot.change_24h
+    if not signal_requested:
+        return (f"{snapshot.symbol.upper()}: {format_price(snapshot.price)}, зміна за 24г {format_percent(change)}. Це короткий ринковий зріз; для повного аналізу потрібні горизонт і мета позиції."
+                if uk else f"{snapshot.symbol.upper()}: {format_price(snapshot.price)}, 24h change {format_percent(change)}. This is a short market snapshot; a full analysis needs your horizon and position objective.")
+    signal = "WAIT" if change is None or abs(change) < 2 else ("HOLD" if change > 0 else "WAIT")
+    confidence = 50 if change is None else min(70, 52 + int(abs(change)))
+    return (f"Сигнал: {'ТРИМАТИ' if signal == 'HOLD' else 'ЧЕКАТИ'}\nВпевненість: {confidence}%\nГоризонт: 1–4 тижні\n\nПричина: {snapshot.symbol.upper()} змінився на {format_percent(change)} за 24г. Сценарій втратить актуальність, якщо напрям руху різко зміниться або з’явиться суттєва нова інформація."
+            if uk else f"Signal: {signal}\nConfidence: {confidence}%\nHorizon: 1–4 weeks\n\nReason: {snapshot.symbol.upper()} moved {format_percent(change)} in 24h. The scenario is invalidated by a sharp reversal or material new information.")
 
 
 async def build_wallet_analysis(telegram_id: int) -> str:
@@ -72,7 +147,7 @@ async def build_wallet_analysis(telegram_id: int) -> str:
     if not wallets:
         return (
             "👛 У вас ще немає збережених гаманців. Додайте їх у розділі Wallets."
-            f"\n\n{DISCLAIMER}"
+            ""
         )
 
     wallet_results, (_, prices) = await asyncio.gather(
@@ -86,7 +161,7 @@ async def build_wallet_analysis(telegram_id: int) -> str:
     snapshots = [result for result in results if isinstance(result, WalletSnapshot)]
     failed = len(results) - len(snapshots)
     if not snapshots:
-        return f"❌ Не вдалося отримати баланси гаманців.\n\n{DISCLAIMER}"
+        return "❌ Не вдалося отримати баланси гаманців."
 
     amounts: Counter[str] = Counter()
     networks: set[str] = set()
@@ -117,7 +192,6 @@ async def build_wallet_analysis(telegram_id: int) -> str:
     lines.append(_diversification_note(amounts))
     if failed:
         lines.append(f"Не вдалося оновити гаманців: {failed}.")
-    lines.extend(["", DISCLAIMER])
     return "\n".join(lines)
 
 

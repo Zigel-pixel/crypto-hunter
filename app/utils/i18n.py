@@ -28,6 +28,8 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "wallet.invalid": "❌ This wallet address is invalid or its network is not supported yet.",
         "wallet.scanning": "🔎 Scanning compatible networks…", "wallet.scan_complete": "🔎 Wallet scan complete",
         "wallet.confirm": "✅ Add all active networks", "wallet.scan_again": "🔄 Scan again", "common.cancel": "❌ Cancel",
+        "consultant.market": "📊 Market Analysis", "consultant.wallet": "👛 Analyze Wallets", "consultant.ask": "💬 Ask Consultant",
+        "alert.create": "➕ Create Alert", "alert.list": "📋 My Alerts", "alert.delete": "🗑 Delete Alert",
     },
     "Ukrainian": {
         "menu.rates": "📈 Курси", "menu.watchlist": "⭐ Обране",
@@ -49,6 +51,8 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "wallet.invalid": "❌ Ця адреса гаманця некоректна або її мережа поки не підтримується.",
         "wallet.scanning": "🔎 Перевіряємо сумісні мережі…", "wallet.scan_complete": "🔎 Перевірку гаманця завершено",
         "wallet.confirm": "✅ Додати всі активні мережі", "wallet.scan_again": "🔄 Сканувати знову", "common.cancel": "❌ Скасувати",
+        "consultant.market": "📊 Аналіз ринку", "consultant.wallet": "👛 Аналіз гаманців", "consultant.ask": "💬 Запитати консультанта",
+        "alert.create": "➕ Створити сповіщення", "alert.list": "📋 Мої сповіщення", "alert.delete": "🗑 Видалити сповіщення",
     },
 }
 

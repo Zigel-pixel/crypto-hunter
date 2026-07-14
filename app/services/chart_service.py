@@ -5,12 +5,28 @@ from io import BytesIO
 
 from app.services.market_service import fetch_price_history
 
+TIMEFRAME_SECONDS = {"15m": 900, "1h": 3600, "4h": 14400, "24h": 86400, "7d": 604800}
+
 
 async def build_crypto_chart(coin_id: str, symbol: str) -> bytes | None:
     history = await fetch_price_history(coin_id)
     if len(history) < 2:
         return None
     return render_chart(history, f"{symbol}/USD — 24 hours")
+
+
+async def build_timeframe_chart(coin_id: str, symbol: str, timeframe: str) -> tuple[bytes, list[tuple[datetime, float]]] | None:
+    seconds = TIMEFRAME_SECONDS.get(timeframe)
+    if seconds is None:
+        raise ValueError("Unsupported chart timeframe")
+    history = await fetch_price_history(coin_id, days=7 if timeframe == "7d" else 1)
+    if not history:
+        return None
+    cutoff = history[-1][0].timestamp() - seconds
+    points = [point for point in history if point[0].timestamp() >= cutoff]
+    if len(points) < 2:
+        return None
+    return render_chart(points, f"{symbol}/USD — {timeframe}"), points
 
 
 def render_chart(points: list[tuple[datetime, float]], title: str) -> bytes:

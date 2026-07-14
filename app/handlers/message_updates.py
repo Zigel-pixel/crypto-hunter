@@ -34,16 +34,17 @@ async def safe_update_photo(
     photo: BufferedInputFile,
     caption: str,
     reply_markup: InlineKeyboardMarkup,
-) -> None:
+) -> types.Message | None:
     try:
         if message.photo:
-            await message.edit_media(
+            result = await message.edit_media(
                 InputMediaPhoto(media=photo, caption=caption), reply_markup=reply_markup
             )
+            return result if isinstance(result, types.Message) else message
         else:
-            await message.answer_photo(photo, caption=caption, reply_markup=reply_markup)
+            return await message.answer_photo(photo, caption=caption, reply_markup=reply_markup)
     except TelegramBadRequest as exc:
         if "message is not modified" in str(exc).lower():
-            return
+            return message
         logger.warning("Could not update Telegram media; sending a new one: %s", exc)
-        await message.answer_photo(photo, caption=caption, reply_markup=reply_markup)
+        return await message.answer_photo(photo, caption=caption, reply_markup=reply_markup)

@@ -305,6 +305,40 @@ produce partial results. Next: deep end-to-end Telegram QA, then the AI assistan
 Next recommended work: complete multi-chain wallet discovery and deep
 end-to-end Telegram QA, then implement the AI assistant.
 
+## Product-quality UX milestone (2026-07-14)
+
+- Live charts use real cached CoinGecko history and Pillow PNG rendering for
+  BTC/ETH/SOL/BNB over 15m, 1h, 4h, 24h, and 7d. `LiveChartManager` owns one
+  replaceable task per chat, refreshes at `LIVE_CHART_REFRESH_SECONDS`, and is
+  cancelled on navigation, Stop, Restart, shutdown, or session replacement.
+- Watchlist Add now presents popular full-name choices and still accepts full,
+  partial, case-insensitive name/ticker searches through `asset_service`.
+  Stable CoinGecko provider IDs remain in callback data; legacy symbols remain
+  the persistence format for compatibility.
+- Alert deletion uses `alert:delete:select:<id>` and
+  `alert:delete:confirm:<id>`, descriptive localized labels, confirmation, and
+  idempotent owner-scoped deletion. Formatting is centralized.
+- Consultant questions are classified into concept, asset, comparison,
+  stablecoin, DeFi, trading-decision, and market-overview intents. Unrelated
+  questions no longer default to BTC. The free fallback is topic-aware; signals
+  are scenario-based and appear only for trading questions. Repetitive full
+  disclaimers were replaced by a concise notice persisted once per user through
+  the existing settings table. Source-language headlines are retained when no
+  translation provider is configured, under localized section labels.
+- Wallet profiles now have stable-ID list/detail, rename, refresh/rescan, and
+  confirmation deletion operations. Profile/network migrations stay additive;
+  deletion is owner-scoped and repeated confirmation is harmless.
+- Main-menu return paths in Rates, News, Portfolio, Settings, Alerts, and the
+  consultant now rebuild from persisted language, addressing the observed
+  language reset caused by default-English keyboard construction.
+- Added models/services/tests for consultant intent, live charts, alert
+  formatting/deletion, and wallet profile operations. No dependency was added.
+
+Known limitations: CoinGecko may provide sparse intraday points; source news
+headlines are not translated without an optional provider; deep manual Telegram
+QA remains required. Next recommended task: manual end-to-end QA and targeted
+polish from real-device results.
+
 Return complete modified files only.
 
 Never break existing features.

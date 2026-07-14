@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup
 
-from app.models.wallet import StoredWallet
+from app.models.wallet import StoredWallet, WalletProfile
 from app.utils.i18n import SUPPORTED_LANGUAGES, translate
 
 ADD_WALLET_BUTTON = "➕ Add Wallet"
@@ -39,3 +39,27 @@ def build_wallet_selection_keyboard(wallets: list[StoredWallet], network_labels:
     buttons = [[KeyboardButton(text=f"{network_labels[wallet.network]}: {wallet.address}")] for wallet in wallets]
     buttons.append([KeyboardButton(text=BACK_BUTTON)])
     return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
+
+
+def build_wallet_profiles_keyboard(profiles: list[WalletProfile], language: str = "English") -> InlineKeyboardMarkup:
+    rows = [[InlineKeyboardButton(text=f"💼 {item.label or item.address[:6] + '…' + item.address[-4:]}", callback_data=f"wallet:profile:{item.id}")] for item in profiles]
+    rows.append([InlineKeyboardButton(text=translate("common.back", language), callback_data="wallet:profiles:back")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def build_wallet_detail_keyboard(profile_id: int, language: str = "English") -> InlineKeyboardMarkup:
+    uk = language == "Ukrainian"
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔄 Оновити баланси" if uk else "🔄 Refresh balances", callback_data=f"wallet:refresh:{profile_id}")],
+        [InlineKeyboardButton(text="🔎 Пересканувати мережі" if uk else "🔎 Rescan networks", callback_data=f"wallet:profile_rescan:{profile_id}")],
+        [InlineKeyboardButton(text="✏️ Перейменувати" if uk else "✏️ Rename", callback_data=f"wallet:rename:{profile_id}")],
+        [InlineKeyboardButton(text="🗑 Видалити" if uk else "🗑 Delete", callback_data=f"wallet:profile_delete:{profile_id}")],
+        [InlineKeyboardButton(text=translate("common.back", language), callback_data="wallet:profiles")],
+    ])
+
+
+def build_wallet_delete_confirmation(profile_id: int, language: str = "English") -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Видалити" if language == "Ukrainian" else "✅ Delete", callback_data=f"wallet:profile_delete_confirm:{profile_id}")],
+        [InlineKeyboardButton(text=translate("common.cancel", language), callback_data=f"wallet:profile:{profile_id}")],
+    ])

@@ -15,8 +15,9 @@ from app.keyboards.favorites import (
     build_watchlist_keyboard,
     build_watchlist_remove_keyboard,
     build_watchlist_search_results,
+    build_popular_asset_keyboard,
 )
-from app.services.asset_service import get_asset, search_assets
+from app.services.asset_service import get_asset, list_supported_assets, search_assets
 from app.models.asset import AssetDefinition
 from app.services.favorites_service import (
     add_favorite,
@@ -52,13 +53,14 @@ async def watchlist_entry(message: types.Message, state: FSMContext) -> None:
 
 @router.message(WatchlistStates.searching)
 async def watchlist_search(message: types.Message, state: FSMContext) -> None:
+    language = await get_setting(message.from_user.id, "language") or "English"
     results = search_assets(message.text or "")
     if not results:
-        await message.answer("No supported coin matched that name or ticker. Try again.")
+        await message.answer("Не знайдено монету за цією назвою або тикером." if language == "Ukrainian" else "No supported coin matched that name or ticker. Try again.")
         return
     await state.clear()
     await message.answer(
-        "Select a coin to add:",
+        "Оберіть точну монету:" if language == "Ukrainian" else "Select the exact coin to add:",
         reply_markup=build_watchlist_search_results(results),
     )
 
@@ -91,9 +93,11 @@ async def watchlist_callback(
 
         if data == "watchlist:add":
             await state.set_state(WatchlistStates.searching)
-            await callback.message.answer(
-                "Send a ticker or name, for example BTC or Bitcoin:"
-            )
+            language = await get_setting(callback.from_user.id, "language") or "English"
+            popular_symbols = {"BTC", "ETH", "SOL", "BNB", "XRP", "DOGE", "ADA", "TRX"}
+            popular = [asset for asset in list_supported_assets() if asset.symbol in popular_symbols]
+            text = "Оберіть популярний актив або введіть назву/тикер:" if language == "Ukrainian" else "Choose a popular asset or type any name/ticker:"
+            await safe_update_message(callback.message, text, build_popular_asset_keyboard(popular, language))
             await callback.answer()
             return
 

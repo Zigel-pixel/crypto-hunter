@@ -12,8 +12,8 @@ from app.handlers.common import user_main_keyboard
 from app.handlers.message_updates import safe_update_message, safe_update_photo
 from app.keyboards.main import action_labels, build_main_keyboard
 from app.models.live_market import LiveQuote
-from app.services.chart_service import build_crypto_chart, render_chart
-from app.services.live_market_service import live_task_manager
+from app.services.chart_service import build_crypto_chart, build_timeframe_chart, render_chart
+from app.services.live_market_service import live_chart_manager, live_task_manager
 from app.services.market_service import (
     CoinSnapshot,
     fetch_market_snapshots,
@@ -91,13 +91,32 @@ def build_coin_keyboard(coin_id: str) -> InlineKeyboardMarkup:
     )
 
 
-def build_live_keyboard() -> InlineKeyboardMarkup:
+def build_live_keyboard(asset: str = "BTC", timeframe: str = "1h", language: str = "English") -> InlineKeyboardMarkup:
+    refresh = "🔄 Оновити" if language == "Ukrainian" else "🔄 Refresh now"
+    stop = "⏹ Зупинити Live" if language == "Ukrainian" else "⏹ Stop Live"
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="⏹ Stop Live", callback_data="rates:live:stop")],
-            [InlineKeyboardButton(text="⬅ Back", callback_data="rates:live:back")],
+            [InlineKeyboardButton(text=("✓ " if asset == symbol else "") + symbol, callback_data=f"rates:live:asset:{symbol}") for symbol in ("BTC", "ETH", "SOL", "BNB")],
+            [InlineKeyboardButton(text=("✓ " if timeframe == value else "") + value, callback_data=f"rates:live:tf:{value}") for value in ("15m", "1h", "4h", "24h", "7d")],
+            [InlineKeyboardButton(text=refresh, callback_data="rates:live:refresh")],
+            [InlineKeyboardButton(text=stop, callback_data="rates:live:stop")],
+            [InlineKeyboardButton(text="⬅ Назад" if language == "Ukrainian" else "⬅ Back", callback_data="rates:live:back")],
         ]
     )
+
+
+async def show_live_chart(message: types.Message, chat_id: int, asset: str, timeframe: str, language: str) -> types.Message | None:
+    coin_id = COIN_IDS[asset]
+    result = await build_timeframe_chart(coin_id, asset, timeframe)
+    if result is None:
+        await safe_update_message(message, "Для цього періоду поки недостатньо ринкових даних." if language == "Ukrainian" else "Not enough market history is available for this timeframe.", build_live_keyboard(asset, timeframe, language))
+        return None
+    chart, points = result
+    first, latest = points[0][1], points[-1][1]
+    absolute = latest - first
+    percent = absolute / first * 100 if first else 0
+    caption = (f"⚡ {asset}/USD · {timeframe}\n\nPrice: ${latest:,.4f}\nChange: {absolute:+,.4f} ({percent:+.2f}%)\nHigh: ${max(x[1] for x in points):,.4f}\nLow: ${min(x[1] for x in points):,.4f}\nUpdated: {points[-1][0].strftime('%H:%M UTC')}\nSource: CoinGecko")
+    return await safe_update_photo(message, BufferedInputFile(chart, filename=f"live-{asset}-{timeframe}.png"), caption, build_live_keyboard(asset, timeframe, language))
 
 
 def build_live_text(quotes: dict[str, LiveQuote]) -> str:
@@ -359,25 +378,35 @@ async def handle_rates_callback(callback: types.CallbackQuery) -> None:
         if callback.message is None:
             await callback.answer()
             return
+        await callback.answer("Loading chart…")
         message = callback.message
-        await safe_update_message(message, build_live_text({}), build_live_keyboard())
+        language = await get_setting(callback.from_user.id, "language") or "English"
+        target = await show_live_chart(message, message.chat.id, "BTC", "1h", language)
+        if target is None:
+            await callback.message.answer("Unable to load chart data right now." if language == "English" else "Зараз не вдалося завантажити дані графіка.")
+            return
+        async def update_chart(asset: str, timeframe: str) -> None:
+            nonlocal target
+            updated = await show_live_chart(target, message.chat.id, asset, timeframe, language)
+            if updated is not None:
+                target = updated
+        await live_chart_manager.start_or_replace(message.chat.id, "BTC", "1h", update_chart)
+        return
 
-        async def update_live(quotes: dict[str, LiveQuote]) -> None:
-            await safe_update_message(
-                message, build_live_text(quotes), build_live_keyboard()
-            )
-
-        started = await live_task_manager.start(message.chat.id, update_live)
-        await callback.answer(
-            "Live monitoring started"
-            if started
-            else "Live monitoring is already active"
-        )
+    if data.startswith(("rates:live:asset:", "rates:live:tf:")) or data == "rates:live:refresh":
+        if callback.message is None or chat_id is None:
+            await callback.answer(); return
+        await callback.answer("Updating…")
+        value = data.rsplit(":", 1)[-1]
+        selection = await live_chart_manager.update_selection(chat_id, asset=value if ":asset:" in data else None, timeframe=value if ":tf:" in data else None)
+        language = await get_setting(callback.from_user.id, "language") or "English"
+        await show_live_chart(callback.message, chat_id, *selection, language)
         return
 
     if data in {"rates:live:stop", "rates:live:back"}:
         if chat_id is not None:
             await live_task_manager.stop(chat_id)
+            await live_chart_manager.stop(chat_id)
         await send_rates_menu(callback)
         return
 
@@ -429,4 +458,4 @@ async def handle_rates_callback(callback: types.CallbackQuery) -> None:
 
 @router.message(lambda message: message.text == "⬅ Back", StateFilter(None))
 async def back_to_main(message: types.Message) -> None:
-    await message.answer("↩ Returned to main menu.", reply_markup=build_main_keyboard())
+    await message.answer("↩ Returned to main menu.", reply_markup=await user_main_keyboard(message.from_user.id))

@@ -6,10 +6,10 @@ from aiogram.fsm.state import State, StatesGroup
 
 from app.handlers.message_updates import safe_update_message
 from app.keyboards.main import action_labels
-from app.keyboards.wallet import BACK_BUTTON, build_discovery_keyboard, build_wallet_keyboard, build_wallet_selection_keyboard, wallet_action_labels
+from app.keyboards.wallet import BACK_BUTTON, build_discovery_keyboard, build_wallet_delete_confirmation, build_wallet_detail_keyboard, build_wallet_keyboard, build_wallet_profiles_keyboard, build_wallet_selection_keyboard, wallet_action_labels
 from app.services.settings_service import get_setting
 from app.services.wallet_discovery_service import discover_wallet
-from app.services.wallet_service import NETWORK_LABELS, get_wallets_text, list_wallets, remove_wallet, save_discovered_wallet
+from app.services.wallet_service import NETWORK_LABELS, delete_wallet_profile, get_wallet_profile, get_wallets_text, list_wallet_profiles, list_wallets, remove_wallet, rename_wallet_profile, save_discovered_wallet
 from app.utils.i18n import normalize_language, translate
 
 router = Router()
@@ -19,6 +19,7 @@ class WalletStates(StatesGroup):
     entering_address = State()
     confirming = State()
     selecting_wallet_to_remove = State()
+    renaming = State()
 
 
 async def _language(user_id: int) -> str:
@@ -93,7 +94,95 @@ async def cancel_wallet(callback: types.CallbackQuery, state: FSMContext) -> Non
 @router.message(lambda message: message.text in wallet_action_labels("wallet.list"))
 async def my_wallets(message: types.Message) -> None:
     language = await _language(message.from_user.id)
-    await message.answer(await get_wallets_text(message.from_user.id), reply_markup=build_wallet_keyboard(language))
+    profiles = await list_wallet_profiles(message.from_user.id)
+    if profiles:
+        await message.answer(_profiles_text(profiles, language), reply_markup=build_wallet_profiles_keyboard(profiles, language))
+    else:
+        await message.answer(await get_wallets_text(message.from_user.id), reply_markup=build_wallet_keyboard(language))
+
+
+@router.callback_query(F.data == "wallet:profiles")
+async def wallet_profiles(callback: types.CallbackQuery) -> None:
+    await callback.answer()
+    language = await _language(callback.from_user.id)
+    profiles = await list_wallet_profiles(callback.from_user.id)
+    if callback.message:
+        await safe_update_message(callback.message, _profiles_text(profiles, language), build_wallet_profiles_keyboard(profiles, language))
+
+
+@router.callback_query(F.data.startswith("wallet:profile:"))
+async def wallet_profile_detail(callback: types.CallbackQuery) -> None:
+    await callback.answer()
+    profile_id = int((callback.data or "").rsplit(":", 1)[1])
+    profile = await get_wallet_profile(callback.from_user.id, profile_id)
+    language = await _language(callback.from_user.id)
+    if callback.message:
+        if profile is None:
+            await safe_update_message(callback.message, "Гаманець не знайдено." if language == "Ukrainian" else "Wallet not found.", None)
+        else:
+            await safe_update_message(callback.message, _profile_text(profile, language), build_wallet_detail_keyboard(profile.id, language))
+
+
+@router.callback_query(F.data.startswith(("wallet:refresh:", "wallet:profile_rescan:")))
+async def refresh_profile(callback: types.CallbackQuery) -> None:
+    await callback.answer("Updating…")
+    profile_id = int((callback.data or "").rsplit(":", 1)[1])
+    profile = await get_wallet_profile(callback.from_user.id, profile_id)
+    language = await _language(callback.from_user.id)
+    if profile is None or callback.message is None:
+        return
+    result = await discover_wallet(profile.address, bypass_cooldown=True)
+    _, added = await save_discovered_wallet(callback.from_user.id, result)
+    profile = await get_wallet_profile(callback.from_user.id, profile_id)
+    suffix = (f"\n\nNew networks: {added}" if added else "") if language == "English" else (f"\n\nНових мереж: {added}" if added else "")
+    await safe_update_message(callback.message, _format_discovery(result, language) + suffix, build_wallet_detail_keyboard(profile_id, language))
+
+
+@router.callback_query(F.data.startswith("wallet:rename:"))
+async def rename_profile_entry(callback: types.CallbackQuery, state: FSMContext) -> None:
+    await callback.answer()
+    profile_id = int((callback.data or "").rsplit(":", 1)[1])
+    if await get_wallet_profile(callback.from_user.id, profile_id) is None:
+        return
+    await state.update_data(profile_id=profile_id)
+    await state.set_state(WalletStates.renaming)
+    if callback.message:
+        language = await _language(callback.from_user.id)
+        await callback.message.answer("Введіть нову назву (1–40 символів):" if language == "Ukrainian" else "Enter a new label (1–40 characters):")
+
+
+@router.message(WalletStates.renaming)
+async def rename_profile(message: types.Message, state: FSMContext) -> None:
+    profile_id = (await state.get_data()).get("profile_id")
+    language = await _language(message.from_user.id)
+    try:
+        updated = isinstance(profile_id, int) and await rename_wallet_profile(message.from_user.id, profile_id, message.text or "")
+    except ValueError:
+        await message.answer("Назва має містити 1–40 символів." if language == "Ukrainian" else "The label must contain 1–40 characters.")
+        return
+    await state.clear()
+    await message.answer(("✅ Гаманець перейменовано." if language == "Ukrainian" else "✅ Wallet renamed.") if updated else ("Гаманець не знайдено." if language == "Ukrainian" else "Wallet not found."), reply_markup=build_wallet_keyboard(language))
+
+
+@router.callback_query(F.data.startswith("wallet:profile_delete:"))
+async def delete_profile_prompt(callback: types.CallbackQuery) -> None:
+    await callback.answer()
+    profile_id = int((callback.data or "").rsplit(":", 1)[1])
+    profile = await get_wallet_profile(callback.from_user.id, profile_id)
+    language = await _language(callback.from_user.id)
+    if callback.message and profile:
+        await safe_update_message(callback.message, ("Видалити цей гаманець?" if language == "Ukrainian" else "Delete this wallet?") + "\n\n" + _profile_text(profile, language), build_wallet_delete_confirmation(profile_id, language))
+
+
+@router.callback_query(F.data.startswith("wallet:profile_delete_confirm:"))
+async def delete_profile_confirm(callback: types.CallbackQuery) -> None:
+    await callback.answer()
+    profile_id = int((callback.data or "").rsplit(":", 1)[1])
+    deleted = await delete_wallet_profile(callback.from_user.id, profile_id)
+    language = await _language(callback.from_user.id)
+    if callback.message:
+        text = ("✅ Гаманець видалено." if language == "Ukrainian" else "✅ Wallet deleted.") if deleted else ("ℹ️ Гаманець уже видалено." if language == "Ukrainian" else "ℹ️ Wallet was already deleted.")
+        await safe_update_message(callback.message, text, None)
 
 
 @router.message(lambda message: message.text in wallet_action_labels("wallet.remove"))
@@ -137,3 +226,21 @@ def _format_discovery(result, language: str) -> str:
     if result.warnings:
         lines.append(("⚠️ Partial provider failure: " if language == "English" else "⚠️ Частина провайдерів недоступна: ") + ", ".join(result.warnings))
     return "\n".join(lines).rstrip()
+
+
+def _profiles_text(profiles, language: str) -> str:
+    if not profiles:
+        return "Гаманців ще немає." if language == "Ukrainian" else "No wallets added yet."
+    lines = ["👛 Гаманці" if language == "Ukrainian" else "👛 Wallets", ""]
+    for item in profiles:
+        lines.extend([f"💼 {item.label or 'Wallet'}", f"{item.address[:6]}…{item.address[-4:]}", f"{item.address_family.upper()} · {' • '.join(item.networks) or '—'}", ""])
+    return "\n".join(lines).rstrip()
+
+
+def _profile_text(profile, language: str) -> str:
+    return "\n".join([
+        f"💼 {profile.label or ('Гаманець' if language == 'Ukrainian' else 'Wallet')}",
+        "", f"Address: {profile.address}", f"Family: {profile.address_family.upper()}",
+        f"Networks: {' • '.join(profile.networks) or '—'}",
+        f"Last refresh: {profile.last_refresh_at or 'N/A'}",
+    ])

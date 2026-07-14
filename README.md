@@ -4,16 +4,20 @@ Crypto Hunter is an MVP Telegram bot for cryptocurrency market tracking, portfol
 
 ## Features
 
-- Cached market rates and Binance WebSocket live updates
-- Watchlist, assets, portfolio, alerts, and crypto news
+- Cached market rates, Binance WebSocket quotes, and managed live price charts
+- Watchlist search by common name/ticker, assets, portfolio, descriptive alerts, and crypto news
 - Read-only Bitcoin, Solana, TRON, and configured EVM wallet balances
 - Ethereum allowlisted ERC-20 balances: USDT, USDC, and DAI
 - TRON native TRX and allowlisted USDT TRC-20 balances
 - English and Ukrainian main menus, session controls, and news UI
 - Per-user `/start`, `/restart`, and `/stop` session controls
+- Topic-aware consultant for assets, comparisons, stablecoins, DeFi, and scenario-based market questions
+- A concise AI uncertainty notice is shown once per user instead of repeating on every response
 - SQLite persistence and cross-platform single-instance protection
 
 The address-first wallet flow recognizes EVM and TRON addresses, scans compatible enabled networks concurrently, and asks before saving. EVM syntax cannot identify a chain. Existing manually saved Bitcoin and Solana wallets remain supported.
+
+Live charts support BTC, ETH, SOL, and BNB across 15m, 1h, 4h, 24h, and 7d. They use cached real CoinGecko history and update one managed Telegram media message. Each chat owns at most one live-chart task.
 
 ## Supported Networks
 
@@ -74,7 +78,7 @@ python main.py
 
 ## Configuration
 
-`BOT_TOKEN` is required. `ALCHEMY_API_KEY`, `ETHERSCAN_API_KEY`, and `TRON_API_KEY` are optional; blank values use limited public fallback behavior. `ETHEREUM_RPC_URL` and `BSC_RPC_URL` override their public defaults. `POLYGON_RPC_URL`, `ARBITRUM_RPC_URL`, `BASE_RPC_URL`, `OPTIMISM_RPC_URL`, and `AVALANCHE_RPC_URL` enable those networks. `WALLET_SCAN_TIMEOUT_SECONDS` is the per-network timeout and `WALLET_MAX_CONCURRENT_SCANS` bounds concurrency. `ALERT_CHECK_INTERVAL_SECONDS` controls alert checks.
+`BOT_TOKEN` is required. `ALCHEMY_API_KEY`, `ETHERSCAN_API_KEY`, and `TRON_API_KEY` are optional; blank values use limited public fallback behavior. `ETHEREUM_RPC_URL` and `BSC_RPC_URL` override their public defaults. `POLYGON_RPC_URL`, `ARBITRUM_RPC_URL`, `BASE_RPC_URL`, `OPTIMISM_RPC_URL`, and `AVALANCHE_RPC_URL` enable those networks. `WALLET_SCAN_TIMEOUT_SECONDS` is the per-network timeout and `WALLET_MAX_CONCURRENT_SCANS` bounds concurrency. `ALERT_CHECK_INTERVAL_SECONDS` controls alert checks. `LIVE_CHART_REFRESH_SECONDS` controls periodic chart replacement and defaults to 45 seconds.
 
 The bot prevents a second local polling process with `.crypto-hunter.lock`; the operating system releases the advisory lock after shutdown or a crash. For the current optional Windows 24/7 setup, Task Scheduler starts a local `run_bot.ps1`. That file is machine-specific and intentionally untracked. Stop the scheduled task before production updates, pull and test, then restart it; never launch a second manual polling process.
 
@@ -93,7 +97,7 @@ Crypto Hunter is read-only. It stores public wallet addresses, never requests pr
 
 ## Localization
 
-English is the fallback language. Ukrainian is supported for the main menu, session controls, news, and the address-first wallet flow. Some older nested screens are still being migrated to the centralized translation catalog.
+English is the fallback language. Ukrainian is supported for the main menu, session controls, news, consultant controls, alert management, and wallet profile flows. Back navigation resolves the persisted language instead of rebuilding an English-default main keyboard.
 
 ## Known Limitations
 
@@ -103,6 +107,7 @@ English is the fallback language. Ukrainian is supported for the main menu, sess
 - Some nested screens still contain English-only text
 - SQLite is appropriate for the MVP but not large horizontal deployments
 - The AI consultant is not a complete analytical assistant
+- News headlines inside analysis remain in their source language when no optional translation provider exists; section labels follow the interface language
 
 ## Roadmap
 

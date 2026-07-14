@@ -12,6 +12,7 @@ from app.keyboards.settings import (
     build_timezone_keyboard,
 )
 from app.services.settings_service import get_setting, upsert_setting
+from app.handlers.common import user_main_keyboard
 
 router = Router()
 
@@ -71,7 +72,7 @@ async def choose_currency(message: types.Message, state: FSMContext) -> None:
 async def save_currency(message: types.Message, state: FSMContext) -> None:
     await upsert_setting(message.from_user.id, "currency", message.text)
     await state.clear()
-    await message.answer("✅ Settings updated.", reply_markup=build_main_keyboard())
+    await message.answer("✅ Settings updated.", reply_markup=await user_main_keyboard(message.from_user.id))
 
 
 @router.message(
@@ -101,7 +102,7 @@ async def save_timezone(message: types.Message, state: FSMContext) -> None:
         return
     await upsert_setting(message.from_user.id, "timezone", timezone_name)
     await state.clear()
-    await message.answer("✅ Settings updated.", reply_markup=build_main_keyboard())
+    await message.answer("✅ Settings updated.", reply_markup=await user_main_keyboard(message.from_user.id))
 
 
 @router.message(lambda message: message.text == "⬅ Back", StateFilter(None))
@@ -119,4 +120,4 @@ async def save_timezone(message: types.Message, state: FSMContext) -> None:
 )
 async def back_to_main(message: types.Message, state: FSMContext) -> None:
     await state.clear()
-    await message.answer("↩ Returned to main menu.", reply_markup=build_main_keyboard())
+    await message.answer("↩ Returned to main menu.", reply_markup=await user_main_keyboard(message.from_user.id))
