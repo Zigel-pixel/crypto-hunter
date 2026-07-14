@@ -44,6 +44,25 @@ class HealthResult:
         return self.status is HealthStatus.HEALTHY
 
 
+@dataclass(frozen=True)
+class RollbackResult:
+    source_restored: bool
+    pointer_restored: bool
+    processes_cleared: bool
+    health_restored: bool
+
+    @property
+    def succeeded(self) -> bool:
+        return all((self.source_restored, self.pointer_restored, self.processes_cleared, self.health_restored))
+
+    @property
+    def summary(self) -> str:
+        return ", ".join(f"{name}={'ok' if value else 'failed'}" for name, value in (
+            ("source", self.source_restored), ("pointer", self.pointer_restored),
+            ("processes", self.processes_cleared), ("health", self.health_restored),
+        ))
+
+
 @dataclass
 class DeploymentReport:
     branch: str

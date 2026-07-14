@@ -2,7 +2,7 @@
 
 ## Overview
 
-Crypto Hunter is a Telegram bot built with Python 3.13 and aiogram 3.x.
+Crypto Hunter is a Telegram bot built with Python 3.11+ and aiogram 3.x. Windows deployment is verified with Python 3.14.
 
 The goal is to create a production-quality cryptocurrency assistant with a clean architecture.
 
@@ -12,7 +12,7 @@ The project must remain fully asynchronous.
 
 ## Tech Stack
 
-- Python 3.13
+- Python 3.11+ (Windows deployment verified with Python 3.14)
 - aiogram 3.x
 - asyncio
 - aiohttp
@@ -466,3 +466,13 @@ python -m qa_e2e run all
 - Runtime state, reports, logs, candidate data, virtual environments, and locks are ignored. `requirements-dev.txt` explicitly provides pytest for unattended candidate verification.
 
 Remaining limitation: the scripts and process/log checks are extensively mocked/audited but have not been executed against the production clone or Task Scheduler during Codex implementation. The first local installation and deployment must be supervised using the README checklist.
+
+## Windows PowerShell 5.1 deployment compatibility fixes (July 2026)
+
+- Removed the fixed Python minor-version selector. Bootstrap Python is a configurable full path, preferring the valid production venv and otherwise resolving `py` without a minor selector. Candidate creation always uses `python -m venv`; Windows is verified with Python 3.14.5.
+- Replaced direct native stderr redirection in the launcher with `Start-Process`, separate stdout/stderr files, `-Wait -PassThru`, and the native process `ExitCode`. Normal application logging on stderr no longer terminates Windows PowerShell 5.1.
+- Removed `ConvertFrom-Json -AsHashtable`. Deployment and clear-state scripts use `PSCustomObject`, safely add missing properties, write UTF-8 without BOM, atomically replace same-volume files, and emit success only after replacement succeeds.
+- Active-Python changes are atomic and validated. Rollback selects a valid previous pointer or explicit default production venv before mutation, restores source and pointer before start, reconciles exact path-scoped processes to zero, then requires exactly one healthy process. Rollback reports source, pointer, process, and health outcomes independently.
+- Task installation/removal checks native `schtasks.exe` exit codes. Local setup lists replacements, warns about local edits, backs up every existing generated script, and requires explicit confirmation.
+
+The auto-deploy scheduled task must remain disabled until these updated templates are installed locally and a supervised deployment succeeds.

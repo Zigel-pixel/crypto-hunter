@@ -14,7 +14,7 @@ Crypto Hunter
 
 Telegram Bot
 
-Python 3.13
+Python 3.11+ (Windows deployment verified with Python 3.14)
 
 aiogram 3.x
 

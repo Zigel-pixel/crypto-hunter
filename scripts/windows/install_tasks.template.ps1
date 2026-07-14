@@ -21,6 +21,8 @@ $botFile = Join-Path $env:TEMP "crypto-hunter-bot-task.xml"; $deployFile = Join-
 try {
     Set-Content -LiteralPath $botFile -Value $botXml -Encoding Unicode; Set-Content -LiteralPath $deployFile -Value $deployXml -Encoding Unicode
     schtasks.exe /Create /TN $BotTaskName /XML $botFile /F | Out-Host
+    if ($LASTEXITCODE -ne 0) { throw "Main bot task installation failed with exit code $LASTEXITCODE." }
     schtasks.exe /Create /TN $DeployTaskName /XML $deployFile /F | Out-Host
+    if ($LASTEXITCODE -ne 0) { throw "Auto deploy task installation failed with exit code $LASTEXITCODE." }
 } finally { Remove-Item -LiteralPath $botFile,$deployFile -Force -ErrorAction SilentlyContinue }
 Write-Host "Installed/updated '$BotTaskName' and '$DeployTaskName'."

@@ -14,6 +14,8 @@ $RapidRestartWindowSeconds = 60
 
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 $LogFile = Join-Path $LogDir "bot.log"
+$StdoutLog = Join-Path $LogDir "bot.stdout.log"
+$StderrLog = Join-Path $LogDir "bot.stderr.log"
 $rapidRestarts = 0
 
 while ($true) {
@@ -26,9 +28,12 @@ while ($true) {
 
     $started = Get-Date
     Add-Content -LiteralPath $LogFile -Value "[$($started.ToString('s'))] Starting Crypto Hunter"
-    Push-Location $ProjectDir
-    try { & $PythonExe $MainFile *>> $LogFile; $code = $LASTEXITCODE }
-    finally { Pop-Location }
+    # Start-Process avoids Windows PowerShell 5.1 converting ordinary native stderr
+    # (including Python INFO logs) into terminating NativeCommandError records.
+    $process = Start-Process -FilePath $PythonExe -ArgumentList @($MainFile) -WorkingDirectory $ProjectDir -RedirectStandardOutput $StdoutLog -RedirectStandardError $StderrLog -NoNewWindow -Wait -PassThru
+    $code = $process.ExitCode
+    if (Test-Path -LiteralPath $StdoutLog) { Get-Content -LiteralPath $StdoutLog | Add-Content -LiteralPath $LogFile }
+    if (Test-Path -LiteralPath $StderrLog) { Get-Content -LiteralPath $StderrLog | Add-Content -LiteralPath $LogFile }
     $runtime = ((Get-Date) - $started).TotalSeconds
     Add-Content -LiteralPath $LogFile -Value "[$((Get-Date).ToString('s'))] Process exited with code $code after $([int]$runtime)s"
 

@@ -15,6 +15,7 @@ class DeploymentScriptAuditTests(unittest.TestCase):
         self.assertNotIn("C:\\Users\\", combined)
         self.assertNotRegex(combined, r"\d{8,}:[A-Za-z0-9_-]{20,}")
         self.assertNotIn("E2E_TELEGRAM_API_HASH=", combined)
+        self.assertNotIn("-3.13", combined)
 
     def test_auto_deploy_verifies_before_stopping(self):
         source = self.scripts["auto_deploy.template.ps1"]
@@ -41,6 +42,59 @@ class DeploymentScriptAuditTests(unittest.TestCase):
         source = self.scripts["setup_local.template.ps1"]
         self.assertIn(".bak", source); self.assertIn("ConfirmSetup", source)
         self.assertNotIn(".env", source); self.assertNotIn("crypto.db", source)
+        self.assertIn("will replace local edits", source)
+
+    def test_python_bootstrap_is_configurable_and_minor_version_independent(self):
+        source = self.scripts["auto_deploy.template.ps1"]
+        self.assertIn('$BasePythonExe = ""', source)
+        self.assertIn(".venv\\Scripts\\python.exe", source)
+        self.assertIn("Get-Command py", source)
+        self.assertIn("$bootstrapPython -m venv", source)
+        self.assertIn("Python \\d+\\.\\d+\\.\\d+", source)
+        self.assertNotRegex(source, r"py\s+-\d+\.\d+")
+
+    def test_launcher_uses_powershell_51_safe_native_redirection(self):
+        source = self.scripts["run_bot.template.ps1"]
+        self.assertIn("Start-Process", source)
+        self.assertIn("-RedirectStandardOutput", source)
+        self.assertIn("-RedirectStandardError", source)
+        self.assertIn("-Wait -PassThru", source)
+        self.assertIn("$process.ExitCode", source)
+        self.assertNotIn("*>>", source)
+        deploy = self.scripts["auto_deploy.template.ps1"]
+        self.assertIn("Invoke-NativeCode", deploy)
+        self.assertIn("$nativeExitCode = $LASTEXITCODE", deploy)
+        self.assertIn("Start-Process -FilePath $candidate", deploy)
+
+    def test_powershell_51_json_and_atomic_state_are_used(self):
+        combined = "\n".join(self.scripts.values())
+        self.assertNotIn("-AsHashtable", combined)
+        self.assertIn("ConvertFrom-Json", combined)
+        self.assertIn("[IO.File]::Replace", combined)
+        self.assertIn("New-Object Text.UTF8Encoding($false)", combined)
+
+    def test_rollback_restores_pointer_before_start_and_reports_substages(self):
+        source = self.scripts["auto_deploy.template.ps1"]
+        rollback = source[source.index("function Restore-Production"):source.index("New-Item -ItemType Directory")]
+        self.assertLess(rollback.index("Set-ActivePython"), rollback.index("Start-ProductionBot"))
+        for field in ("source_restored", "pointer_restored", "processes_cleared", "health_restored"):
+            self.assertIn(field, rollback)
+        self.assertIn("Get-RestorePython", source)
+        self.assertIn("default production Python", source)
+
+    def test_process_reconciliation_requires_zero_then_exactly_one(self):
+        source = self.scripts["auto_deploy.template.ps1"]
+        self.assertIn("Exact production processes did not exit before start", source)
+        self.assertIn("did not create exactly one matching process", source)
+        self.assertIn("[regex]::Escape", source)
+        self.assertNotIn("*CryptoHunter*", source)
+
+    def test_success_messages_follow_checked_operations(self):
+        install = self.scripts["install_tasks.template.ps1"]
+        self.assertLess(install.rindex("if ($LASTEXITCODE -ne 0)"), install.rindex("Installed/updated"))
+        clear = self.scripts["clear_failed_deployment.template.ps1"]
+        self.assertLess(clear.index("[IO.File]::Replace"), clear.index("retry block cleared"))
+        self.assertIn("exit 1", clear)
 
     def test_runtime_paths_are_ignored(self):
         ignore = Path(".gitignore").read_text(encoding="utf-8")

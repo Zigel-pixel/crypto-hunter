@@ -49,7 +49,7 @@ Public endpoints are rate limited and may return partial or temporarily unavaila
 
 ## Requirements
 
-- Python 3.13
+- Python 3.11 or newer; Windows deployment has been verified with Python 3.14
 - Telegram bot token
 - SQLite and an internet connection
 - Optional provider API keys for higher limits or richer Ethereum data
@@ -59,7 +59,7 @@ Public endpoints are rate limited and may return partial or temporarily unavaila
 ```powershell
 git clone https://github.com/Zigel-pixel/crypto-hunter.git
 cd crypto-hunter
-py -3.13 -m venv .venv
+py -m venv .venv
 .venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
 Copy-Item .env.example .env
@@ -69,7 +69,7 @@ python main.py
 ```bash
 git clone https://github.com/Zigel-pixel/crypto-hunter.git
 cd crypto-hunter
-python3.13 -m venv .venv
+python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install -r requirements.txt
 cp .env.example .env
@@ -240,6 +240,16 @@ English is the fallback language. Ukrainian is supported for the main menu, sess
 - Consider PostgreSQL when scaling requires it
 
 ## Windows Automatic Deployment
+
+### Windows PowerShell 5.1 compatibility
+
+Windows PowerShell 5.1 is the supported deployment baseline. Python is configurable and has no hardcoded minor version; the supervised environment is verified with Python 3.14.5. The deployer prefers a valid production `.venv\Scripts\python.exe`, otherwise uses the configured full executable path, then the full path resolved from `py` without a version selector. It logs only the safe interpreter path and version locally before creating the candidate with `python -m venv`.
+
+The launcher uses `Start-Process` with separate stdout/stderr files and reads the native `ExitCode`, preventing normal Python stderr logging from becoming a terminating PowerShell `NativeCommandError`. JSON uses PowerShell 5.1 `PSCustomObject` handling; state and active-Python pointer replacements use same-volume `System.IO.File.Replace`/`Move` with UTF-8 without BOM. Templates do not use `ConvertFrom-Json -AsHashtable` or PowerShell 7-only pipeline syntax.
+
+Rollback captures the previous valid active-Python pointer before mutation, falling back explicitly to the default production virtual environment when necessary. It stops only processes whose command line contains the exact configured production `main.py`, verifies zero before start, restores source and pointer, then requires exactly one healthy process. Source, pointer, process cleanup, and health are recorded as separate rollback stages.
+
+Keep `Crypto Hunter Auto Deploy` disabled until the updated templates have been copied locally, reviewed, and the first deployment has been supervised. Existing locally corrected scripts receive timestamped backups; setup prints every file that will replace local edits and requires explicit confirmation.
 
 The repository contains sanitized templates under `scripts/windows`; machine-specific copies remain untracked. The deployment-only production clone is expected at a locally configured path and must stay on `feat/market-core` with the configured GitHub origin and no tracked changes. A five-minute Task Scheduler check fetches the branch but sends no notification and performs no restart when the commit is unchanged.
 

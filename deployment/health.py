@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
+import re
 
 from deployment.models import HealthResult, HealthStatus
 
@@ -13,9 +14,18 @@ class ProcessInfo:
     command_line: str
 
 
+def matches_production_process(process: ProcessInfo, production_dir: Path) -> bool:
+    expected = str(production_dir.resolve() / "main.py").replace("/", "\\").casefold()
+    command = process.command_line.replace("/", "\\").casefold()
+    return bool(re.search(rf'(^|\s|"){re.escape(expected)}($|\s|")', command))
+
+
+def matching_production_processes(processes: Iterable[ProcessInfo], production_dir: Path) -> tuple[ProcessInfo, ...]:
+    return tuple(item for item in processes if matches_production_process(item, production_dir))
+
+
 def evaluate_health(processes: Iterable[ProcessInfo], production_dir: Path, log_tail: str, *, remained_alive: bool = True) -> HealthResult:
-    root = str(production_dir.resolve()).casefold()
-    matching = tuple(item for item in processes if root in item.command_line.casefold() and "main.py" in item.command_line.casefold())
+    matching = matching_production_processes(processes, production_dir)
     if not matching:
         return HealthResult(HealthStatus.FAILED_START, 0, "Production bot process was not found")
     if len(matching) != 1:

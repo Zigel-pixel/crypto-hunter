@@ -7,12 +7,13 @@ import unittest
 from unittest.mock import AsyncMock, patch
 
 from app.utils.single_instance import InstanceAlreadyRunning
-from deployment.health import ProcessInfo, evaluate_health
-from deployment.models import DeploymentReport, DeploymentState, DeploymentStatus, HealthStatus, StageResult
+from deployment.health import ProcessInfo, evaluate_health, matching_production_processes
+from deployment.models import DeploymentReport, DeploymentState, DeploymentStatus, HealthStatus, RollbackResult, StageResult
 from deployment.notifications import send_admin_notification
 from deployment.orchestrator import DeploymentOrchestrator
 from deployment.reporting import DeploymentReportStorage, json_report, markdown_report
 from deployment.state import DeploymentStateStore, deployment_lock
+from deployment.windows import LauncherAction, launcher_action, resolve_restore_python, select_bootstrap_python
 
 
 class FakeOperations:
@@ -139,6 +140,54 @@ class DeploymentHealthTests(unittest.TestCase):
         self.assertEqual(evaluate_health([process, ProcessInfo(2, process.command_line)], root, "polling").status, HealthStatus.DUPLICATE_PROCESS)
         self.assertEqual(evaluate_health([process], root, "Traceback (most recent call last)").status, HealthStatus.LOG_ERROR)
         self.assertEqual(evaluate_health([process], root, "Starting Crypto Hunter").status, HealthStatus.HEALTHY)
+
+    def test_process_matching_is_exact_and_path_scoped(self):
+        root = Path.cwd()
+        exact = ProcessInfo(10, f'python "{root / "main.py"}"')
+        unrelated = ProcessInfo(11, f'python "{root.parent / (root.name + "-copy") / "main.py"}"')
+        worker = ProcessInfo(12, f'python "{root / "worker.py"}"')
+        self.assertEqual(matching_production_processes((exact, unrelated, worker), root), (exact,))
+
+
+class RollbackResultTests(unittest.TestCase):
+    def test_complete_rollback_requires_every_substage(self):
+        complete = RollbackResult(True, True, True, True)
+        self.assertTrue(complete.succeeded)
+        for result in (
+            RollbackResult(True, False, True, True),
+            RollbackResult(True, True, True, False),
+            RollbackResult(False, True, True, True),
+            RollbackResult(True, True, False, True),
+        ):
+            self.assertFalse(result.succeeded)
+            self.assertIn("failed", result.summary)
+
+    def test_restore_pointer_existing_missing_and_invalid(self):
+        previous = Path("C:/venvs/previous/python.exe")
+        default = Path("C:/production/.venv/python.exe")
+        self.assertEqual(resolve_restore_python(previous, default, lambda path: path == previous), previous.resolve())
+        self.assertEqual(resolve_restore_python(None, default, lambda path: path == default), default.resolve())
+        self.assertEqual(resolve_restore_python(Path("C:/missing/python.exe"), default, lambda path: path == default), default.resolve())
+        with self.assertRaises(RuntimeError): resolve_restore_python(previous, default, lambda path: False)
+
+
+class WindowsInterpreterAndLauncherTests(unittest.TestCase):
+    def test_python_314_and_arbitrary_full_path_are_supported(self):
+        production = Path("C:/production/.venv/Scripts/python.exe")
+        configured = Path("D:/Tools/Python/python.exe")
+        selected = select_bootstrap_python(production, configured, None, lambda path: "Python 3.14.5" if path == configured else None)
+        self.assertEqual(selected.path, configured.resolve()); self.assertEqual(selected.version, "Python 3.14.5")
+
+    def test_valid_production_python_is_preferred(self):
+        production = Path("C:/production/.venv/Scripts/python.exe")
+        configured = Path("D:/Tools/Python/python.exe")
+        selected = select_bootstrap_python(production, configured, None, lambda path: "Python 3.14.5")
+        self.assertEqual(selected.path, production.resolve())
+
+    def test_native_nonzero_exit_is_preserved_for_restart_policy(self):
+        self.assertEqual(launcher_action(7, 30, 0), LauncherAction.RESTART)
+        self.assertEqual(launcher_action(1, 2, 0), LauncherAction.EXIT_DUPLICATE)
+        self.assertEqual(launcher_action(9, 2, 2), LauncherAction.EXIT_CRASH_LOOP)
 
 
 class DeploymentReportingTests(unittest.TestCase):
