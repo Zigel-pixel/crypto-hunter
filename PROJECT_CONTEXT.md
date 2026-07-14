@@ -248,6 +248,39 @@ Never rewrite working modules without reason.
 
 Prefer improving existing code over replacing it.
 
+---
+
+## Wallet and Localization Foundation (2026-07-14)
+
+- Added a typed, network-free address detector for EVM and TRON families. EVM
+  addresses are compared case-insensitively; TRON uses full Base58Check and the
+  `0x41` network prefix rather than a leading-character check.
+- Existing Bitcoin, Ethereum, BNB Chain, Solana, and TRON storage and retrieval
+  remain intact. Ethereum reads ETH plus allowlisted USDT, USDC, and DAI ERC-20;
+  TRON reads TRX and allowlisted USDT TRC-20 through TronGrid.
+- TronGrid accepts an optional `TRON_API_KEY`. Native TRX survives malformed
+  token data and USDT is labeled explicitly as TRC-20. Ethereum and BSC public
+  RPC URLs can be overridden with environment variables.
+- Wallet insertion now normalizes EVM casing and checks existing rows with a
+  case-insensitive query. No schema was removed or rewritten and no database
+  deletion is required.
+- Added a centralized English/Ukrainian translation catalog with English
+  fallback and missing-key logging. Main-menu Assets, Alerts, Start, Restart,
+  Stop, session messages, and News titles/actions now follow stored language.
+- The existing conditional `msvcrt`/`fcntl` single-instance implementation was
+  preserved. `.crypto-hunter.lock`, `.env`, databases, caches, and virtual
+  environments remain ignored.
+- Added address and localization tests. No dependencies changed.
+
+Known limitations: automatic multi-network EVM discovery, confirmation-based
+wallet UX, network merging metadata, full wallet details/rename/rescan, and
+complete nested-screen localization are not yet implemented. Balance-only
+discovery will be required to document that zero-balance historical activity
+can be missed.
+
+Next recommended work: complete multi-chain wallet discovery and deep
+end-to-end Telegram QA, then implement the AI assistant.
+
 Return complete modified files only.
 
 Never break existing features.

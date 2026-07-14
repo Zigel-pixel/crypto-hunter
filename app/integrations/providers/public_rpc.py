@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import asyncio
 import logging
+import os
 import ssl
 from decimal import Decimal, InvalidOperation
 from typing import Any
@@ -17,7 +18,7 @@ from app.integrations.providers import ProviderError
 
 CHAIN = "ethereum"
 PROVIDER = "public_rpc"
-API_URL = "https://ethereum-rpc.publicnode.com"
+API_URL = os.getenv("ETHEREUM_RPC_URL", "").strip() or "https://ethereum-rpc.publicnode.com"
 WEI_DECIMALS = 18
 REQUEST_TIMEOUT_SECONDS = 20
 TOKEN_CONTRACTS: dict[str, tuple[str, int]] = {

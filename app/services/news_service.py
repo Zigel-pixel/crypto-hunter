@@ -57,10 +57,12 @@ async def get_news(limit: int = NEWS_LIMIT) -> list[NewsItem]:
     return items
 
 
-def build_news_text(items: list[NewsItem]) -> str:
+def build_news_text(items: list[NewsItem], language: str = "English") -> str:
+    from app.utils.i18n import translate
+
     if not items:
-        return "❌ Не вдалося завантажити новини. Спробуйте трохи пізніше."
-    lines = ["📰 Останні криптоновини", ""]
+        return translate("news.unavailable", language)
+    lines = [translate("news.title", language), ""]
     for index, item in enumerate(items, start=1):
         published = _format_date(item.published_at)
         lines.append(
@@ -70,7 +72,7 @@ def build_news_text(items: list[NewsItem]) -> str:
         if published:
             lines.append(f"   🕒 {published}")
         lines.append("")
-    lines.append("Джерело: CoinDesk")
+    lines.append(translate("news.source", language))
     return "\n".join(lines)
 
 

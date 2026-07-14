@@ -1,10 +1,14 @@
 from __future__ import annotations
 
-import fcntl
 import os
 from pathlib import Path
 from types import TracebackType
 from typing import IO
+
+if os.name == "nt":
+    import msvcrt
+else:
+    import fcntl
 
 
 class InstanceAlreadyRunning(RuntimeError):
@@ -12,7 +16,7 @@ class InstanceAlreadyRunning(RuntimeError):
 
 
 class SingleInstanceLock:
-    """Advisory process lock for local POSIX/macOS polling processes."""
+    """Cross-platform advisory process lock for local polling processes."""
 
     def __init__(self, path: Path) -> None:
         self._path = path
@@ -20,12 +24,38 @@ class SingleInstanceLock:
 
     def acquire(self) -> None:
         lock_file = self._path.open("a+", encoding="utf-8")
+
         try:
-            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError as exc:
-            lock_file.seek(0)
-            owner = lock_file.read().strip() or "unknown"
+            if os.name == "nt":
+                # Windows locking requires at least one byte in the file.
+                lock_file.seek(0)
+                if not lock_file.read(1):
+                    lock_file.seek(0)
+                    lock_file.write("0")
+                    lock_file.flush()
+
+                lock_file.seek(0)
+                msvcrt.locking(
+                    lock_file.fileno(),
+                    msvcrt.LK_NBLCK,
+                    1,
+                )
+            else:
+                fcntl.flock(
+                    lock_file.fileno(),
+                    fcntl.LOCK_EX | fcntl.LOCK_NB,
+                )
+
+        except (BlockingIOError, OSError) as exc:
+            owner = "unknown"
+            try:
+                lock_file.seek(0)
+                owner = lock_file.read().strip() or owner
+            except OSError:
+                # Windows may deny reads from the byte range held by the owner.
+                pass
             lock_file.close()
+
             raise InstanceAlreadyRunning(
                 f"Crypto Hunter is already running locally (PID {owner})."
             ) from exc
@@ -34,16 +64,31 @@ class SingleInstanceLock:
         lock_file.truncate()
         lock_file.write(str(os.getpid()))
         lock_file.flush()
+
         self._file = lock_file
 
     def release(self) -> None:
         if self._file is None:
             return
-        fcntl.flock(self._file.fileno(), fcntl.LOCK_UN)
-        self._file.close()
-        self._file = None
 
-    def __enter__(self) -> SingleInstanceLock:
+        try:
+            if os.name == "nt":
+                self._file.seek(0)
+                msvcrt.locking(
+                    self._file.fileno(),
+                    msvcrt.LK_UNLCK,
+                    1,
+                )
+            else:
+                fcntl.flock(
+                    self._file.fileno(),
+                    fcntl.LOCK_UN,
+                )
+        finally:
+            self._file.close()
+            self._file = None
+
+    def __enter__(self) -> "SingleInstanceLock":
         self.acquire()
         return self
 
@@ -54,4 +99,3 @@ class SingleInstanceLock:
         traceback: TracebackType | None,
     ) -> None:
         self.release()
-

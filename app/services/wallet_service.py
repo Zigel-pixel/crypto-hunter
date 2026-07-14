@@ -13,6 +13,8 @@ import aiosqlite
 from app.integrations.blockchain import bnb, bitcoin, ethereum, solana, tron
 from app.integrations.blockchain.models import WalletSnapshot
 from app.models.wallet import StoredWallet
+from app.models.wallet_address import AddressFamily
+from app.services.wallet_address_service import detect_wallet_address
 from app.services.market_service import fetch_market_prices
 
 DB_NAME = "crypto.db"
@@ -77,7 +79,12 @@ async def get_wallet(chain: str, address: str) -> WalletSnapshot:
 
 async def add_wallet(telegram_id: int, network: str, address: str) -> bool:
     normalized_network = network.lower()
-    normalized_address = address.strip()
+    detected = detect_wallet_address(address)
+    normalized_address = (
+        detected.comparison_address
+        if detected and detected.family is AddressFamily.EVM
+        else address.strip()
+    )
     if not validate_wallet_address(normalized_network, normalized_address):
         raise ValueError(f"Invalid {normalized_network} wallet address")
 
@@ -85,10 +92,15 @@ async def add_wallet(telegram_id: int, network: str, address: str) -> bool:
     async with aiosqlite.connect(DB_NAME) as db:
         cursor = await db.execute(
             """
-            INSERT OR IGNORE INTO wallets (telegram_id, network, address, created_at)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO wallets (telegram_id, network, address, created_at)
+            SELECT ?, ?, ?, ?
+            WHERE NOT EXISTS (
+                SELECT 1 FROM wallets
+                WHERE telegram_id = ? AND network = ? AND lower(address) = lower(?)
+            )
             """,
-            (telegram_id, normalized_network, normalized_address, created_at),
+            (telegram_id, normalized_network, normalized_address, created_at,
+             telegram_id, normalized_network, normalized_address),
         )
         await db.commit()
         return cursor.rowcount > 0
@@ -186,7 +198,8 @@ def _format_wallet_portfolio(snapshot: WalletSnapshot) -> list[str]:
         return lines
 
     for asset in snapshot.assets:
-        lines.extend([asset.symbol, _format_amount(asset.amount)])
+        label = f"{asset.symbol} ({asset.standard})" if asset.standard else asset.symbol
+        lines.extend([label, _format_amount(asset.amount)])
         if asset.usd_value is not None:
             lines.append(_format_approx_usd(asset.usd_value))
         lines.append("")

@@ -9,6 +9,7 @@ class WalletAsset:
     symbol: str
     amount: float
     usd_value: float | None = None
+    standard: str | None = None
 
 
 @dataclass(frozen=True)

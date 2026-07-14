@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import os
 import ssl
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
@@ -13,7 +14,7 @@ from app.integrations.blockchain.models import WalletAsset, WalletSnapshot
 
 CHAIN = "bnb"
 ADDRESS_PATTERN = re.compile(r"^0x[a-fA-F0-9]{40}$")
-RPC_URL = "https://bsc-rpc.publicnode.com"
+RPC_URL = os.getenv("BSC_RPC_URL", "").strip() or "https://bsc-rpc.publicnode.com"
 REQUEST_TIMEOUT_SECONDS = 15
 WEI_DECIMALS = 18
 

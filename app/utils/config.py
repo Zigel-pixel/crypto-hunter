@@ -26,3 +26,5 @@ def _get_positive_int(name: str, default: int) -> int:
 
 
 ALERT_CHECK_INTERVAL_SECONDS = _get_positive_int("ALERT_CHECK_INTERVAL_SECONDS", 60)
+WALLET_SCAN_TIMEOUT_SECONDS = _get_positive_int("WALLET_SCAN_TIMEOUT_SECONDS", 15)
+WALLET_MAX_CONCURRENT_SCANS = _get_positive_int("WALLET_MAX_CONCURRENT_SCANS", 3)

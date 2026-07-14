@@ -1,38 +1,37 @@
 from aiogram.types import KeyboardButton, ReplyKeyboardMarkup
 
-MAIN_LABELS = {
-    "English": ("📈 Rates", "⭐ Watchlist", "🔔 Alerts", "📰 News", "💼 Portfolio", "👛 Wallets", "🤖 AI Consultant", "⚙ Settings"),
-    "Ukrainian": ("📈 Курси", "⭐ Обране", "🔔 Alerts", "📰 Новини", "💼 Портфель", "👛 Гаманці", "🤖 AI Консультант", "⚙ Налаштування"),
-    "Russian": ("📈 Курсы", "⭐ Избранное", "🔔 Alerts", "📰 Новости", "💼 Портфель", "👛 Кошельки", "🤖 AI Консультант", "⚙ Настройки"),
-    "Chinese": ("📈 行情", "⭐ 收藏", "🔔 Alerts", "📰 新闻", "💼 投资组合", "👛 钱包", "🤖 AI 顾问", "⚙ 设置"),
-}
+from app.utils.i18n import SUPPORTED_LANGUAGES, translate
+
+_MENU_KEYS = (
+    "menu.rates", "menu.watchlist", "menu.alerts", "menu.news",
+    "menu.portfolio", "menu.wallets", "menu.consultant", "menu.settings",
+)
 
 
 def action_labels(index: int) -> set[str]:
-    return {labels[index] for labels in MAIN_LABELS.values()}
+    return {translate(_MENU_KEYS[index], language) for language in SUPPORTED_LANGUAGES}
+
+
+def control_labels(key: str) -> set[str]:
+    return {translate(key, language) for language in SUPPORTED_LANGUAGES}
 
 
 def build_main_keyboard(language: str = "English") -> ReplyKeyboardMarkup:
-    labels = MAIN_LABELS.get(language, MAIN_LABELS["English"])
+    labels = [translate(key, language) for key in _MENU_KEYS]
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text=labels[0]), KeyboardButton(text=labels[1])],
             [KeyboardButton(text=labels[2]), KeyboardButton(text=labels[3])],
             [KeyboardButton(text=labels[4]), KeyboardButton(text=labels[5])],
-            [KeyboardButton(text="🔎 Assets")],
-            [KeyboardButton(text=labels[6])],
-            [KeyboardButton(text=labels[7])],
-            [
-                KeyboardButton(text="▶️ Start"),
-                KeyboardButton(text="🔄 Restart"),
-                KeyboardButton(text="⏹ Stop"),
-            ],
-        ],
-        resize_keyboard=True,
+            [KeyboardButton(text=translate("menu.assets", language))],
+            [KeyboardButton(text=labels[6])], [KeyboardButton(text=labels[7])],
+            [KeyboardButton(text=translate("controls.start", language)), KeyboardButton(text=translate("controls.restart", language)), KeyboardButton(text=translate("controls.stop", language))],
+        ], resize_keyboard=True,
     )
 
 
-def build_stopped_keyboard() -> ReplyKeyboardMarkup:
+def build_stopped_keyboard(language: str = "English") -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text="▶️ Start")]], resize_keyboard=True
+        keyboard=[[KeyboardButton(text=translate("controls.start", language))]],
+        resize_keyboard=True,
     )
