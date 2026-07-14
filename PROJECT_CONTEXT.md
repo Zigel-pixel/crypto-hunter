@@ -272,11 +272,35 @@ Prefer improving existing code over replacing it.
   environments remain ignored.
 - Added address and localization tests. No dependencies changed.
 
-Known limitations: automatic multi-network EVM discovery, confirmation-based
-wallet UX, network merging metadata, full wallet details/rename/rescan, and
-complete nested-screen localization are not yet implemented. Balance-only
-discovery will be required to document that zero-balance historical activity
-can be missed.
+## Multi-chain Wallet Discovery (2026-07-14 resumed run)
+
+- EVM and TRON remain the automatically detected address families. EVM syntax
+  never claims a particular chain. Ethereum and BNB Smart Chain have public RPC
+  defaults; Polygon, Arbitrum One, Base, Optimism, and Avalanche C-Chain are
+  enabled only by their configured RPC URLs.
+- A central registry owns chain IDs, native symbols, explorers, RPC environment
+  variables, and Ethereum's USDT/USDC/DAI ERC-20 allowlist. A generic async
+  JSON-RPC client reads native and allowlisted token balances.
+- Discovery uses bounded concurrency, individual timeouts, exception isolation,
+  a per-address lock, and a short cooldown. Active means a supported non-zero
+  balance; zero-balance scans are valid and provider failures are partial.
+- The Wallets add flow is now address-first: warning, paste, detection, scan,
+  result, then explicit confirmation. TRON uses TronGrid for TRX and USDT
+  TRC-20. The bot never accepts private credentials or signs transactions.
+- Additive `wallet_profiles` and `wallet_networks` tables store an address once
+  and merge networks. Startup idempotently copies legacy rows without deleting
+  them, preserving labels/legacy behavior and the existing `wallets` table.
+- Wallet flow strings use the central English/Ukrainian catalog. Stable inline
+  callback data remains language-independent.
+- Files added: `network_registry.py`, `evm_rpc.py`, `wallet_discovery.py`,
+  `wallet_discovery_service.py`, discovery and RPC tests. No dependencies were
+  changed or files deleted. The machine-specific untracked `run_bot.ps1` was
+  preserved and excluded from source control.
+
+Known limitations: full wallet detail/rename/delete/rescan screens and complete
+nested-screen localization are not yet implemented. Balance-based discovery can
+miss historical activity with zero current balance. Public RPC rate limits can
+produce partial results. Next: deep end-to-end Telegram QA, then the AI assistant.
 
 Next recommended work: complete multi-chain wallet discovery and deep
 end-to-end Telegram QA, then implement the AI assistant.

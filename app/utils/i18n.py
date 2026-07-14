@@ -22,6 +22,12 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "session.unavailable": "Session service is temporarily unavailable.",
         "news.title": "📰 Latest crypto news", "news.unavailable": "❌ Could not load news. Please try again later.",
         "news.source": "Source: CoinDesk", "news.refresh": "🔄 Refresh News",
+        "wallet.title": "👛 Wallets", "wallet.add": "➕ Add wallet",
+        "wallet.list": "📋 My wallets", "wallet.remove": "🗑 Delete wallet",
+        "wallet.warning": "⚠️ Send only a public wallet address. Never send a seed phrase or private key.",
+        "wallet.invalid": "❌ This wallet address is invalid or its network is not supported yet.",
+        "wallet.scanning": "🔎 Scanning compatible networks…", "wallet.scan_complete": "🔎 Wallet scan complete",
+        "wallet.confirm": "✅ Add all active networks", "wallet.scan_again": "🔄 Scan again", "common.cancel": "❌ Cancel",
     },
     "Ukrainian": {
         "menu.rates": "📈 Курси", "menu.watchlist": "⭐ Обране",
@@ -37,6 +43,12 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "session.unavailable": "Сервіс сеансів тимчасово недоступний.",
         "news.title": "📰 Останні криптоновини", "news.unavailable": "❌ Не вдалося завантажити новини. Спробуйте трохи пізніше.",
         "news.source": "Джерело: CoinDesk", "news.refresh": "🔄 Оновити новини",
+        "wallet.title": "👛 Гаманці", "wallet.add": "➕ Додати гаманець",
+        "wallet.list": "📋 Мої гаманці", "wallet.remove": "🗑 Видалити гаманець",
+        "wallet.warning": "⚠️ Надсилайте лише публічну адресу гаманця. Ніколи не надсилайте seed-фразу або приватний ключ.",
+        "wallet.invalid": "❌ Ця адреса гаманця некоректна або її мережа поки не підтримується.",
+        "wallet.scanning": "🔎 Перевіряємо сумісні мережі…", "wallet.scan_complete": "🔎 Перевірку гаманця завершено",
+        "wallet.confirm": "✅ Додати всі активні мережі", "wallet.scan_again": "🔄 Сканувати знову", "common.cancel": "❌ Скасувати",
     },
 }
 

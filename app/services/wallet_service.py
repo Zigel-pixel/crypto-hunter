@@ -14,6 +14,7 @@ from app.integrations.blockchain import bnb, bitcoin, ethereum, solana, tron
 from app.integrations.blockchain.models import WalletSnapshot
 from app.models.wallet import StoredWallet
 from app.models.wallet_address import AddressFamily
+from app.models.wallet_discovery import WalletDiscoveryResult
 from app.services.wallet_address_service import detect_wallet_address
 from app.services.market_service import fetch_market_prices
 
@@ -104,6 +105,43 @@ async def add_wallet(telegram_id: int, network: str, address: str) -> bool:
         )
         await db.commit()
         return cursor.rowcount > 0
+
+
+async def save_discovered_wallet(telegram_id: int, result: WalletDiscoveryResult) -> tuple[bool, int]:
+    """Create/merge one address profile and its active networks without touching legacy rows."""
+    created_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    address = result.address.comparison_address
+    family = result.address.family.value
+    networks = [snapshot.chain for snapshot in result.active]
+    if family == AddressFamily.TRON.value and not networks:
+        networks = ["tron"]  # a valid zero-balance TRON address is still saveable
+    async with aiosqlite.connect(DB_NAME) as db:
+        cursor = await db.execute(
+            "SELECT id FROM wallet_profiles WHERE telegram_id=? AND address_family=? AND address=? COLLATE NOCASE",
+            (telegram_id, family, address),
+        )
+        row = await cursor.fetchone()
+        created = row is None
+        if row is None:
+            cursor = await db.execute(
+                "INSERT INTO wallet_profiles (telegram_id,address,address_family,created_at,last_refresh_at) VALUES (?,?,?,?,?)",
+                (telegram_id, address, family, created_at, created_at),
+            )
+            wallet_id = cursor.lastrowid
+        else:
+            wallet_id = row[0]
+            await db.execute("UPDATE wallet_profiles SET last_refresh_at=? WHERE id=?", (created_at, wallet_id))
+        added = 0
+        for network in networks:
+            cursor = await db.execute("INSERT OR IGNORE INTO wallet_networks (wallet_id,network) VALUES (?,?)", (wallet_id, network))
+            added += cursor.rowcount
+            # Keep legacy readers and removal UI working during the additive migration.
+            await db.execute(
+                "INSERT OR IGNORE INTO wallets (telegram_id,network,address,created_at) VALUES (?,?,?,?)",
+                (telegram_id, network, address, created_at),
+            )
+        await db.commit()
+    return created, added
 
 
 async def list_wallets(telegram_id: int) -> list[StoredWallet]:
