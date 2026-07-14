@@ -20,3 +20,4 @@ class WalletSnapshot:
     provider: str
     total_usd_value: float | None = None
     updated_at: datetime | None = None
+    warnings: tuple[str, ...] = ()

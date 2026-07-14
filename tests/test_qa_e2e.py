@@ -120,6 +120,25 @@ class E2EStorageTests(unittest.TestCase):
         text = sanitize_text("phone +1 202 555 0123 api_key=supersecret")
         self.assertNotIn("202", text); self.assertNotIn("supersecret", text)
 
+    def test_structured_public_values_are_not_corrupted(self) -> None:
+        evm = "0x000000000000000000000000000000000000dEaD"
+        tron = "TXLAQ63Xg1NAzckPwKHvzw7CSEmLMEqcdj"
+        tx_hash = "0x" + "a1" * 32
+        text = sanitize_text(f"{evm} {tron} {tx_hash} price=12345678.90 id=123456789 at=2026-07-14 12:30:00")
+        self.assertIn("0x0000…dEaD", text)
+        self.assertIn("TXLAQ6…qcdj", text)
+        self.assertIn(tx_hash, text)
+        self.assertIn("12345678.90", text)
+        self.assertIn("123456789", text)
+        self.assertIn("2026-07-14 12:30:00", text)
+
+    def test_configured_phone_and_api_credentials_are_redacted(self) -> None:
+        env = {"E2E_TELEGRAM_PHONE": "380501234567", "E2E_TELEGRAM_API_ID": "12345678", "E2E_TELEGRAM_API_HASH": "abcdef123456"}
+        with patch.dict(os.environ, env, clear=False):
+            text = sanitize_text("380501234567 12345678 abcdef123456")
+        for secret in env.values():
+            self.assertNotIn(secret, text)
+
 
 class E2EBoundaryTests(unittest.TestCase):
     def test_no_main_or_qa_bot_tokens_and_no_shell_execution(self) -> None:

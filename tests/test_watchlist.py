@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from types import SimpleNamespace
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import aiosqlite
 
-from app.handlers.favorites import _detail_text, _watchlist_text
+from app.handlers.favorites import _detail_text, _watchlist_text, watchlist_callback
 from app.integrations.coingecko.market import CoinSnapshot
 from app.services import favorites_service
 from app.services.favorites_service import add_favorite, get_favorites, remove_favorite
@@ -80,6 +81,24 @@ class WatchlistPersistenceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await get_favorites(1), ["BTC"])
         self.assertTrue(await remove_favorite(1, "BTC"))
         self.assertFalse(await remove_favorite(1, "BTC"))
+
+
+class WatchlistHandlerTests(unittest.IsolatedAsyncioTestCase):
+    async def test_add_handler_attaches_popular_full_name_buttons(self) -> None:
+        message = SimpleNamespace(text="watchlist", caption=None)
+        callback = SimpleNamespace(data="watchlist:add", message=message, from_user=SimpleNamespace(id=1), answer=AsyncMock())
+        state = SimpleNamespace(set_state=AsyncMock())
+        with patch("app.handlers.favorites.get_setting", AsyncMock(return_value="English")), patch(
+            "app.handlers.favorites.safe_update_message", AsyncMock()
+        ) as update:
+            await watchlist_callback(callback, state)
+        markup = update.await_args.args[2]
+        labels = [button.text for row in markup.inline_keyboard for button in row]
+        callbacks = [button.callback_data for row in markup.inline_keyboard for button in row]
+        self.assertIn("Bitcoin (BTC)", labels)
+        self.assertIn("Ethereum (ETH)", labels)
+        self.assertIn("Solana (SOL)", labels)
+        self.assertIn("watchlist:add_asset:bitcoin", callbacks)
 
 
 if __name__ == "__main__":

@@ -11,7 +11,6 @@ from aiogram.types import (
 from app.handlers.common import user_main_keyboard
 from app.handlers.message_updates import safe_update_message, safe_update_photo
 from app.keyboards.main import action_labels, build_main_keyboard
-from app.models.live_market import LiveQuote
 from app.services.chart_service import build_crypto_chart, build_timeframe_chart, render_chart
 from app.services.live_market_service import live_chart_manager, live_task_manager
 from app.services.market_service import (
@@ -117,26 +116,6 @@ async def show_live_chart(message: types.Message, chat_id: int, asset: str, time
     percent = absolute / first * 100 if first else 0
     caption = (f"⚡ {asset}/USD · {timeframe}\n\nPrice: ${latest:,.4f}\nChange: {absolute:+,.4f} ({percent:+.2f}%)\nHigh: ${max(x[1] for x in points):,.4f}\nLow: ${min(x[1] for x in points):,.4f}\nUpdated: {points[-1][0].strftime('%H:%M UTC')}\nSource: CoinGecko")
     return await safe_update_photo(message, BufferedInputFile(chart, filename=f"live-{asset}-{timeframe}.png"), caption, build_live_keyboard(asset, timeframe, language))
-
-
-def build_live_text(quotes: dict[str, LiveQuote]) -> str:
-    lines = ["⚡ Live Crypto / USDT", ""]
-    for symbol in ("BTC", "ETH", "SOL", "BNB"):
-        quote = quotes.get(symbol)
-        lines.append(
-            f"{symbol}/USDT: ${quote.price:,.2f}"
-            if quote
-            else f"{symbol}/USDT: connecting…"
-        )
-    latest = max((quote.updated_at for quote in quotes.values()), default=None)
-    lines.extend(
-        [
-            "",
-            "Source: Binance WebSocket",
-            f"Updated: {latest.strftime('%H:%M:%S UTC') if latest else 'waiting for data'}",
-        ]
-    )
-    return "\n".join(lines)
 
 
 def build_coin_page_text(

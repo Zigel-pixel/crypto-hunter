@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from collections.abc import Awaitable, Callable
 
 from qa_bot.models import Scenario, Severity
@@ -61,8 +62,12 @@ def build_scenarios(client: TelegramE2EClient, config: E2EConfig) -> tuple[Scena
         if raw is None: return False, "Rates response lacks inspectable message", _evidence(rates)
         chart = await client.click_inline(raw, callback_prefix="rates:live:start", timeout=config.long_timeout)
         media = [item for item in chart.messages if item.media_type]
-        ok = bool(media) and any("BTC" in item.text and any(tf in item.text for tf in ("1h", "15m", "24h")) for item in chart.messages)
-        return ok, f"messages={len(chart.messages)}, media={len(media)}", _evidence(chart)
+        labels = tuple(label for item in chart.messages for label in item.inline_buttons)
+        expected_timeframes = ("15m", "1h", "4h", "24h", "7d")
+        old_mode = any("Live Crypto / USDT" in item.text or "Binance WebSocket" in item.text for item in chart.messages)
+        ok = (bool(media) and not old_mode and all(any(tf in label for label in labels) for tf in expected_timeframes)
+              and any("BTC" in item.text and any(tf in item.text for tf in expected_timeframes) for item in chart.messages))
+        return ok, f"messages={len(chart.messages)}, media={len(media)}, timeframes={labels}, old_mode={old_mode}", _evidence(chart)
 
     async def favorites():
         start = await client.send("/start"); message = _latest(start)
@@ -72,7 +77,7 @@ def build_scenarios(client: TelegramE2EClient, config: E2EConfig) -> tuple[Scena
         if raw is None: return False, "Watchlist message unavailable", _evidence(opened)
         add = await client.click_inline(raw, callback_prefix="watchlist:add")
         labels = tuple(label for item in add.messages for label in item.inline_buttons)
-        ok = any("Bitcoin" in label and "BTC" in label for label in labels)
+        ok = "Bitcoin (BTC)" in labels and "Ethereum (ETH)" in labels and "Solana (SOL)" in labels
         return ok, f"popular labels={labels}", _evidence(add)
 
     async def alerts():
@@ -89,8 +94,11 @@ def build_scenarios(client: TelegramE2EClient, config: E2EConfig) -> tuple[Scena
         await client.send_reply_button(_raw_message_placeholder(current), ("💬 Запитати консультанта", "💬 Ask Consultant"))
         response = await client.send("Що ти скажеш про стейблкоїни?", timeout=config.long_timeout)
         text = "\n".join(item.text for item in response.messages)
-        ok = any(token in text for token in ("USDT", "USDC", "DAI")) and not contains_raw_error(text)
-        return ok, f"topic keywords present={ok}, messages={len(response.messages)}", _evidence(response)
+        topic = all(token in text for token in ("USDT", "USDC", "DAI"))
+        risk = any(token in text.casefold() for token in ("емітент", "issuer", "резерв", "reserve", "depeg", "прив’яз"))
+        legacy_dump = "Поточна картина ринку" in text or "Current market" in text
+        ok = topic and risk and not legacy_dump and not contains_raw_error(text)
+        return ok, f"stablecoins={topic}, risk={risk}, legacy_dump={legacy_dump}, messages={len(response.messages)}", _evidence(response)
 
     async def wallets():
         start = await client.send("/start"); message = _latest(start)
@@ -100,9 +108,16 @@ def build_scenarios(client: TelegramE2EClient, config: E2EConfig) -> tuple[Scena
         if current is None: return False, "Wallet menu unavailable", _evidence(opened)
         warning = await client.send_reply_button(_raw_message_placeholder(current), ("➕ Додати гаманець", "➕ Add wallet"))
         response = await client.send(PUBLIC_EVM_TEST_ADDRESS, timeout=config.long_timeout)
-        text = "\n".join(item.text for item in response.messages).casefold()
-        ok = "seed" in text or "public" in text or "публіч" in text or "wallet" in text or "гаман" in text
-        return ok, f"messages={len(response.messages)}, destructive={config.allow_destructive}", _evidence(response)
+        text = "\n".join(item.text for item in response.messages)
+        lowered = text.casefold()
+        values = re.findall(r"(?:^|:\s)([0-9][0-9,]*(?:\.[0-9]+)?)", text, re.MULTILINE)
+        parseable = all(_parse_balance(value) is not None for value in values)
+        standards_ok = not any(symbol in text and "ERC-20" not in text for symbol in ("USDT", "USDC", "DAI"))
+        networks_ok = any(name in lowered for name in ("ethereum", "bnb", "polygon", "arbitrum", "base", "optimism", "avalanche", "мереж"))
+        provider_error = contains_raw_error(text) or "traceback" in lowered or "json-rpc" in lowered
+        outcome = bool(values) or "no supported balances" in lowered or "підтримуваних балансів не знайдено" in lowered
+        ok = outcome and parseable and standards_ok and networks_ok and not provider_error
+        return ok, f"messages={len(response.messages)}, values={len(values)}, parseable={parseable}, standards={standards_ok}, networks={networks_ok}, provider_error={provider_error}", _evidence(response)
 
     return (
         _scenario(client, config, "e2e.smoke.start", "Start and main keyboard", "smoke", "Start responds with a safe main reply keyboard", smoke_start, severity=Severity.CRITICAL),
@@ -118,6 +133,14 @@ def build_scenarios(client: TelegramE2EClient, config: E2EConfig) -> tuple[Scena
 
 def _evidence(result) -> str:
     return " | ".join(f"id={item.message_id}; media={item.media_type or 'text'}; text={item.text[:200]}; inline={item.inline_buttons}; reply={item.reply_buttons}; t={item.response_seconds:.2f}s" for item in result.messages[:10]) or "No target-bot response"
+
+
+def _parse_balance(value: str) -> float | None:
+    try:
+        parsed = float(value.replace(",", ""))
+    except ValueError:
+        return None
+    return parsed if parsed >= 0 and parsed != float("inf") else None
 
 
 class _raw_message_placeholder:

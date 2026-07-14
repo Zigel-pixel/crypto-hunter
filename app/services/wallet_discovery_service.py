@@ -40,5 +40,13 @@ async def discover_wallet(value: str, *, bypass_cooldown: bool = False) -> Walle
                 return await asyncio.wait_for(get_evm_wallet(network, address.display_address, WALLET_SCAN_TIMEOUT_SECONDS), WALLET_SCAN_TIMEOUT_SECONDS)
         results = await asyncio.gather(*(scan(network) for network in networks), return_exceptions=True)
         active = tuple(result for result in results if not isinstance(result, BaseException) and result.assets)
-        warnings = tuple(network.display_name for network, result in zip(networks, results, strict=True) if isinstance(result, BaseException))
+        warnings = tuple(
+            warning
+            for network, result in zip(networks, results, strict=True)
+            for warning in (
+                (f"{network.display_name} provider unavailable",)
+                if isinstance(result, BaseException)
+                else result.warnings
+            )
+        )
         return WalletDiscoveryResult(address, tuple(item.network_id for item in networks), active, warnings)

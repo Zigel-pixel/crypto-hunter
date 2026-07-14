@@ -23,7 +23,7 @@ class WalletDiscoveryTests(unittest.IsolatedAsyncioTestCase):
         with patch("app.services.wallet_discovery_service.enabled_evm_networks", return_value=enabled), patch("app.services.wallet_discovery_service.get_evm_wallet", fetch):
             result = await discover_wallet(ADDRESS, bypass_cooldown=True)
         self.assertEqual([item.chain for item in result.active], ["ethereum", "polygon"])
-        self.assertEqual(result.warnings, ("BNB Smart Chain",))
+        self.assertEqual(result.warnings, ("BNB Smart Chain provider unavailable",))
 
     async def test_all_zero_is_valid(self) -> None:
         network = NETWORKS[:1]

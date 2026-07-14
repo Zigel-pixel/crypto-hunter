@@ -84,7 +84,7 @@ class TelegramE2EClient:
     async def collect(self, baseline: int, action: str, started: float, *, timeout: int | None = None, include_baseline: bool = False) -> ActionResult:
         self._require_target()
         deadline = started + (timeout or self.config.default_timeout)
-        seen: dict[tuple[int, str], MessageEvidence] = {}
+        seen: dict[tuple[int, str, str | None, tuple[str, ...]], MessageEvidence] = {}
         raw_seen: dict[int, Any] = {}
         last_change = time.monotonic()
         while time.monotonic() < deadline:
@@ -97,7 +97,7 @@ class TelegramE2EClient:
                     continue
                 evidence = self._evidence(message, now - started, edited=bool(getattr(message, "edit_date", None)))
                 raw_seen[message_id] = message
-                key = (message_id, evidence.text)
+                key = (message_id, evidence.text, evidence.media_type, evidence.inline_buttons)
                 if key not in seen:
                     seen[key] = evidence
                     last_change = now
