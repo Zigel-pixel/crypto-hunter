@@ -369,6 +369,35 @@ polish from real-device results.
   dedicated user account through Telethon or Pyrogram, then optional explicit
   GitHub Issue → Codex PR automation.
 
+## Real Telegram E2E client (2026-07-14)
+
+- Added `qa_e2e`, a separate Telethon user-client CLI. It never starts the main
+  bot or administrator QA bot and never reads their tokens. Configuration is
+  environment-only and E2E refuses to run unless `E2E_ENABLED=true`.
+- `python -m qa_e2e auth` performs first-time authorization only through the
+  local console. Login codes use local `input`; Telegram 2FA uses `getpass` and
+  is never stored, logged, reported, accepted via Telegram, or passed as a CLI
+  argument. Session paths are restricted to `qa/e2e_sessions`.
+- `TelegramE2EClient` resolves exactly the configured username, verifies it is a
+  bot, records a message baseline, reads a bounded set of new target-chat
+  messages/edits, waits for a stable response, and captures sanitized text,
+  keyboard labels, media type, limited message IDs, and response timing.
+- Central selectors normalize English/Ukrainian labels and reject payments,
+  URLs, login buttons, and Web Apps. No external links are followed and no
+  arbitrary target, path, or shell command can be supplied.
+- E2E scenarios reuse `qa_bot` Scenario/Result/RunReport and cover real Smoke,
+  Localization, Live, Favorites, Alerts safety, AI relevance, and public-wallet
+  flows. The default non-destructive mode skips persistent deletion/cleanup.
+- E2E Markdown/JSON reports and failure-only Codex prompts use the existing
+  redaction/reporting pipeline. Storage is constrained to allowlisted E2E report
+  and artifact filenames. Admin QA integration is read-only: status, scenario
+  listing, latest report, and latest failure prompt. Remote login and execution
+  are deliberately unavailable.
+- Added Telethon as the only user-client dependency. Sessions, journals,
+  reports, evidence, media, and E2E logs are ignored. Next milestone: optional
+  GitHub Issue creation and Codex PR automation, then controlled human-approved
+  deployment.
+
 Return complete modified files only.
 
 Never break existing features.

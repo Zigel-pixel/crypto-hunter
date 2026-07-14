@@ -14,10 +14,14 @@ from qa_bot.reporting import telegram_summary
 from qa_bot.scenario_runner import RunAlreadyActive, ScenarioRunner
 from qa_bot.security import is_authorized, safe_exception
 from qa_bot.storage import ReportStorage
+from qa_e2e.config import E2EConfigError, load_e2e_config
+from qa_e2e.scenarios import build_scenarios as build_e2e_scenarios
+from qa_e2e.client import TelegramE2EClient
+from qa_e2e.storage import E2EStorage, PROMPT_RE
 
 logger = logging.getLogger("crypto_hunter.qa")
 SUITE_COMMANDS = {"run_all": "all", "run_smoke": "smoke", "run_localization": "localization", "run_live": "live", "run_favorites": "favorites", "run_alerts": "alerts", "run_ai": "ai", "run_wallets": "wallets"}
-HELP = "Commands: /run_all /run_smoke /run_localization /run_live /run_favorites /run_alerts /run_ai /run_wallets /status /last_report /list_scenarios /cancel /clear_reports /codex_prompt"
+HELP = "Commands: /run_all /run_smoke /run_localization /run_live /run_favorites /run_alerts /run_ai /run_wallets /status /last_report /list_scenarios /cancel /clear_reports /codex_prompt /e2e_status /e2e_list /e2e_last_report /e2e_codex_prompt"
 
 
 async def authorize_event(event: types.Message | types.CallbackQuery, admin_id: int) -> bool:
@@ -148,5 +152,50 @@ def build_router(config: QAConfig, runner: ScenarioRunner, storage: ReportStorag
         if callback.message:
             if callback.data == "qa:clear:confirm": await callback.message.answer(f"Cleared {storage.clear_reports()} generated report files.")
             else: await callback.message.answer("Clear cancelled.")
+
+    def e2e_context():
+        e2e = load_e2e_config(require_enabled=False)
+        return e2e, E2EStorage(e2e.reports_dir, e2e.artifacts_dir)
+
+    @router.message(Command("e2e_status"))
+    async def e2e_status(message: types.Message) -> None:
+        if not await authorized(message): return
+        try:
+            e2e, _ = e2e_context()
+            session_present = e2e.session_path.with_suffix(".session").exists() or e2e.session_path.exists()
+            await message.answer(f"Telegram E2E: {'enabled' if e2e.enabled else 'disabled'}; local session: {'present' if session_present else 'authorization required'}. Login codes and 2FA are accepted only by `python -m qa_e2e auth` locally.")
+        except E2EConfigError:
+            await message.answer("Telegram E2E configuration is incomplete. Configure and authorize it locally.")
+
+    @router.message(Command("e2e_list"))
+    async def e2e_list(message: types.Message) -> None:
+        if not await authorized(message): return
+        try:
+            e2e, _ = e2e_context()
+            placeholder = TelegramE2EClient(e2e, client=object())
+            await message.answer("\n".join(f"• {item.id} — {item.title}" for item in build_e2e_scenarios(placeholder, e2e)))
+        except E2EConfigError:
+            await message.answer("Telegram E2E configuration is incomplete.")
+
+    @router.message(Command("e2e_last_report"))
+    async def e2e_last_report(message: types.Message) -> None:
+        if not await authorized(message): return
+        try:
+            _, e2e_storage = e2e_context(); path = e2e_storage.last_report()
+            if path: await message.answer_document(FSInputFile(path), caption=path.name)
+            else: await message.answer("No Telegram E2E report is available.")
+        except E2EConfigError:
+            await message.answer("Telegram E2E configuration is incomplete.")
+
+    @router.message(Command("e2e_codex_prompt"))
+    async def e2e_codex_prompt(message: types.Message) -> None:
+        if not await authorized(message): return
+        try:
+            _, e2e_storage = e2e_context()
+            path = next((item for item in e2e_storage.reports() if PROMPT_RE.fullmatch(item.name)), None)
+            if path: await message.answer_document(FSInputFile(path), caption="Verified Telegram E2E failures only.")
+            else: await message.answer("No Telegram E2E failure prompt is available.")
+        except E2EConfigError:
+            await message.answer("Telegram E2E configuration is incomplete.")
 
     return router

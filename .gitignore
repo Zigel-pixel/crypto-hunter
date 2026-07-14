@@ -45,6 +45,16 @@ qa/*.db
 qa/**/*.db
 qa*.log
 
+# Sensitive real Telegram E2E runtime data
+qa/e2e_sessions/
+qa/e2e_reports/
+qa/e2e_artifacts/
+*.session
+*.session-journal
+e2e*.log
+e2e-*.png
+e2e-*.jpg
+
 # Machine-specific local deployment helpers
 run_bot.ps1
 update_bot.ps1
