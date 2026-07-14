@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 
 import aiosqlite
-from aiogram import Router, types
+from aiogram import F, Router, types
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -36,7 +36,8 @@ from app.services.market_service import (
 from app.services.settings_service import get_setting
 from app.utils.timezones import format_market_time
 
-router = Router()
+router = Router(name="favorites")
+add_router = Router(name="favorites_add")
 logger = logging.getLogger(__name__)
 WATCHLIST_LABELS = {"⭐ Favorites", "⭐ Watchlist", "⭐ Обране", "⭐ Избранное", "⭐ 收藏"}
 
@@ -65,9 +66,21 @@ async def watchlist_search(message: types.Message, state: FSMContext) -> None:
     )
 
 
-@router.callback_query(
-    lambda callback: callback.data and callback.data.startswith("watchlist:")
-)
+@add_router.callback_query(F.data == "watchlist:add")
+async def watchlist_add(callback: types.CallbackQuery, state: FSMContext) -> None:
+    if callback.message is None:
+        await callback.answer()
+        return
+    await state.set_state(WatchlistStates.searching)
+    language = await get_setting(callback.from_user.id, "language") or "English"
+    popular_symbols = {"BTC", "ETH", "SOL", "BNB", "XRP", "DOGE", "ADA", "TRX"}
+    popular = [asset for asset in list_supported_assets() if asset.symbol in popular_symbols]
+    text = "Оберіть популярний актив або введіть назву/тикер:" if language == "Ukrainian" else "Choose a popular asset or type any name/ticker:"
+    await callback.message.answer(text, reply_markup=build_popular_asset_keyboard(popular, language))
+    await callback.answer()
+
+
+@router.callback_query(lambda callback: callback.data and callback.data.startswith("watchlist:") and callback.data != "watchlist:add")
 async def watchlist_callback(
     callback: types.CallbackQuery, state: FSMContext
 ) -> None:
@@ -89,16 +102,6 @@ async def watchlist_callback(
             )
             if not data.endswith("refresh"):
                 await callback.answer()
-            return
-
-        if data == "watchlist:add":
-            await state.set_state(WatchlistStates.searching)
-            language = await get_setting(callback.from_user.id, "language") or "English"
-            popular_symbols = {"BTC", "ETH", "SOL", "BNB", "XRP", "DOGE", "ADA", "TRX"}
-            popular = [asset for asset in list_supported_assets() if asset.symbol in popular_symbols]
-            text = "Оберіть популярний актив або введіть назву/тикер:" if language == "Ukrainian" else "Choose a popular asset or type any name/ticker:"
-            await safe_update_message(callback.message, text, build_popular_asset_keyboard(popular, language))
-            await callback.answer()
             return
 
         if data == "watchlist:remove":

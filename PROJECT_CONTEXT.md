@@ -434,3 +434,22 @@ Crypto Hunter should become a full crypto assistant including:
 - Multi-language support
 - Background jobs
 - Production deployment
+## Production Telegram route isolation (July 2026)
+
+Real Telegram E2E runs showed that direct handler/service tests were not sufficient to prove which aiogram route owned AI questions, Watchlist Add, and Live callbacks. Production dispatcher construction now lives in `app/dispatcher.py`, and the verified routes are registered before their broader feature routers.
+
+- Consultant questions in `ConsultantStates.entering_question` are owned by the dedicated `consultant_question` router and call `answer_consultant_question`. Market Analysis remains a separate explicit button and no longer shares ownership of question messages.
+- `watchlist:add` is owned by the exact `favorites_add` callback router. It activates typed-search state and sends a fresh English/Ukrainian response with popular full-name buttons and provider-ID callback data. The broader `watchlist:` router explicitly excludes this action.
+- `rates:live:*` is owned by the exact `rates_live` router. The default start action renders BTC/1h PNG media with asset/timeframe/refresh/stop/back controls. The broader `rates:` router explicitly excludes Live callbacks.
+- The obsolete Binance text-only `LiveTaskManager` was removed from active services, startup cleanup, middleware, and session handlers. `LiveChartManager` is now the only production Live session owner and replaces an existing task per chat.
+
+Regression coverage now includes service responses, actual handler calls, production-router ownership/order, duplicate-owner checks, PNG/media creation, timeframe controls, replacement/cancellation, popular callback IDs, localization, callback-data length, and obsolete-import/source audits. The router audit is `tests/test_production_routing.py`.
+
+Known limitation: mocked dispatcher/handler tests cannot prove Telegram delivery or the deployed process environment. Rerun these manually after deployment; Codex verification must not start polling or run real Telegram E2E automatically:
+
+```powershell
+python -m qa_e2e run ai
+python -m qa_e2e run favorites
+python -m qa_e2e run live
+python -m qa_e2e run all
+```

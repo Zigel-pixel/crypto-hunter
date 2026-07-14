@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, patch
 
 import aiosqlite
 
-from app.handlers.favorites import _detail_text, _watchlist_text, watchlist_callback
+from app.handlers.favorites import _detail_text, _watchlist_text, watchlist_add
 from app.integrations.coingecko.market import CoinSnapshot
 from app.services import favorites_service
 from app.services.favorites_service import add_favorite, get_favorites, remove_favorite
@@ -88,17 +88,25 @@ class WatchlistHandlerTests(unittest.IsolatedAsyncioTestCase):
         message = SimpleNamespace(text="watchlist", caption=None)
         callback = SimpleNamespace(data="watchlist:add", message=message, from_user=SimpleNamespace(id=1), answer=AsyncMock())
         state = SimpleNamespace(set_state=AsyncMock())
-        with patch("app.handlers.favorites.get_setting", AsyncMock(return_value="English")), patch(
-            "app.handlers.favorites.safe_update_message", AsyncMock()
-        ) as update:
-            await watchlist_callback(callback, state)
-        markup = update.await_args.args[2]
+        with patch("app.handlers.favorites.get_setting", AsyncMock(return_value="English")):
+            message.answer = AsyncMock()
+            await watchlist_add(callback, state)
+        markup = message.answer.await_args.kwargs["reply_markup"]
         labels = [button.text for row in markup.inline_keyboard for button in row]
         callbacks = [button.callback_data for row in markup.inline_keyboard for button in row]
         self.assertIn("Bitcoin (BTC)", labels)
         self.assertIn("Ethereum (ETH)", labels)
         self.assertIn("Solana (SOL)", labels)
         self.assertIn("watchlist:add_asset:bitcoin", callbacks)
+        state.set_state.assert_awaited_once()
+
+    async def test_add_handler_localizes_ukrainian_prompt(self) -> None:
+        message = SimpleNamespace(answer=AsyncMock())
+        callback = SimpleNamespace(data="watchlist:add", message=message, from_user=SimpleNamespace(id=1), answer=AsyncMock())
+        state = SimpleNamespace(set_state=AsyncMock())
+        with patch("app.handlers.favorites.get_setting", AsyncMock(return_value="Ukrainian")):
+            await watchlist_add(callback, state)
+        self.assertIn("Оберіть популярний актив", message.answer.await_args.args[0])
 
 
 if __name__ == "__main__":

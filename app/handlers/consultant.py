@@ -17,7 +17,8 @@ from app.services.consultant_service import answer_consultant_question, build_ma
 from app.services.settings_service import get_setting, upsert_setting
 from app.handlers.common import user_main_keyboard
 
-router = Router()
+router = Router(name="consultant")
+question_router = Router(name="consultant_question")
 
 
 class ConsultantStates(StatesGroup):
@@ -66,7 +67,7 @@ async def ask_consultant(message: types.Message, state: FSMContext) -> None:
     )
 
 
-@router.message(
+@question_router.message(
     lambda message: message.text != BACK_BUTTON,
     ConsultantStates.entering_question,
 )

@@ -9,7 +9,7 @@ from app.handlers.common import user_main_keyboard
 from app.keyboards.main import build_stopped_keyboard, control_labels
 from app.services.settings_service import get_setting
 from app.utils.i18n import normalize_language, translate
-from app.services.live_market_service import live_chart_manager, live_task_manager
+from app.services.live_market_service import live_chart_manager
 from app.services.user_service import activate_user, stop_user
 
 router = Router()
@@ -21,7 +21,6 @@ logger = logging.getLogger(__name__)
 async def cmd_start(message: types.Message, state: FSMContext) -> None:
     language = normalize_language(await get_setting(message.from_user.id, "language"))
     await state.clear()
-    await live_task_manager.stop(message.chat.id)
     await live_chart_manager.stop(message.chat.id)
     try:
         await activate_user(message.from_user.id)
@@ -40,7 +39,6 @@ async def cmd_start(message: types.Message, state: FSMContext) -> None:
 async def restart_session(message: types.Message, state: FSMContext) -> None:
     language = normalize_language(await get_setting(message.from_user.id, "language"))
     await state.clear()
-    await live_task_manager.stop(message.chat.id)
     await live_chart_manager.stop(message.chat.id)
     try:
         await activate_user(message.from_user.id)
@@ -59,7 +57,6 @@ async def restart_session(message: types.Message, state: FSMContext) -> None:
 async def stop_session(message: types.Message, state: FSMContext) -> None:
     language = normalize_language(await get_setting(message.from_user.id, "language"))
     await state.clear()
-    await live_task_manager.stop(message.chat.id)
     await live_chart_manager.stop(message.chat.id)
     try:
         await stop_user(message.from_user.id)

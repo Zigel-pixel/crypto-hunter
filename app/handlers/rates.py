@@ -12,7 +12,7 @@ from app.handlers.common import user_main_keyboard
 from app.handlers.message_updates import safe_update_message, safe_update_photo
 from app.keyboards.main import action_labels, build_main_keyboard
 from app.services.chart_service import build_crypto_chart, build_timeframe_chart, render_chart
-from app.services.live_market_service import live_chart_manager, live_task_manager
+from app.services.live_market_service import live_chart_manager
 from app.services.market_service import (
     CoinSnapshot,
     fetch_market_snapshots,
@@ -29,7 +29,8 @@ from app.services.settings_service import get_setting
 from app.utils.assets import ASSET_LABELS, COIN_IDS
 from app.utils.timezones import format_market_time
 
-router = Router()
+router = Router(name="rates")
+live_router = Router(name="rates_live")
 
 COIN_OPTIONS = {
     coin_id: {"label": ASSET_LABELS[symbol], "symbol": symbol}
@@ -344,14 +345,10 @@ async def refresh_rates(message: types.Message) -> None:
     await send_rates_menu(message)
 
 
-@router.callback_query(
-    lambda callback: callback.data and callback.data.startswith("rates:")
-)
-async def handle_rates_callback(callback: types.CallbackQuery) -> None:
+@live_router.callback_query(lambda callback: callback.data and callback.data.startswith("rates:live:"))
+async def handle_live_callback(callback: types.CallbackQuery) -> None:
     data = callback.data or ""
     chat_id = callback.message.chat.id if callback.message is not None else None
-    if chat_id is not None and not data.startswith("rates:live:"):
-        await live_task_manager.stop(chat_id)
 
     if data == "rates:live:start":
         if callback.message is None:
@@ -384,10 +381,16 @@ async def handle_rates_callback(callback: types.CallbackQuery) -> None:
 
     if data in {"rates:live:stop", "rates:live:back"}:
         if chat_id is not None:
-            await live_task_manager.stop(chat_id)
             await live_chart_manager.stop(chat_id)
         await send_rates_menu(callback)
         return
+
+    await callback.answer("This Live action is no longer available.")
+
+
+@router.callback_query(lambda callback: callback.data and callback.data.startswith("rates:") and not callback.data.startswith("rates:live:"))
+async def handle_rates_callback(callback: types.CallbackQuery) -> None:
+    data = callback.data or ""
 
     if data == "rates:back":
         await send_rates_menu(callback)
