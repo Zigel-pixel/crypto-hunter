@@ -71,6 +71,19 @@ class FakeMessages(list):
 
 
 class E2EClientTests(unittest.IsolatedAsyncioTestCase):
+    async def test_recent_actions_skip_newer_non_owning_messages(self) -> None:
+        wrapper = TelegramE2EClient(config(), AsyncMock()); wrapper.target = Mock()
+        inline = Mock(buttons=[[Mock(text="Live", data=b"rates:live:start", url=None, login_url=None, webview=None, web_app=None, buy=False, payment=False)]])
+        no_buttons = Mock(buttons=None, reply_markup=None)
+        reply = Mock(reply_markup=Mock(rows=[Mock(buttons=[Mock(text="🌐 Мова")])]), buttons=None)
+        wrapper.last_raw_messages = (inline, reply, no_buttons)
+        wrapper.click_inline = AsyncMock(return_value="clicked")
+        wrapper.send = AsyncMock(return_value="sent")
+        self.assertEqual(await wrapper.click_recent_inline(callback_prefix="rates:live:start"), "clicked")
+        self.assertIs(wrapper.click_inline.await_args.args[0], inline)
+        self.assertEqual(await wrapper.send_recent_reply_action(("🌐 Мова", "🌐 Language")), "sent")
+        wrapper.send.assert_awaited_once_with("🌐 Мова", timeout=None)
+
     async def test_target_must_be_bot(self) -> None:
         raw = AsyncMock()
         raw.is_user_authorized.return_value = True

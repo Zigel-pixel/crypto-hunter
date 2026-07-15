@@ -9,6 +9,7 @@ from app.utils.i18n import translate
 from app.keyboards.alerts import build_alerts_keyboard
 from app.keyboards.consultant import build_consultant_keyboard
 from app.keyboards.wallet import build_wallet_detail_keyboard
+from app.keyboards.settings import build_language_keyboard, build_settings_keyboard
 
 
 def _button_texts(markup: object) -> set[str]:
@@ -43,6 +44,12 @@ class LocalizationTests(unittest.TestCase):
         self.assertIn("💬 Запитати консультанта", consultant)
         self.assertEqual(wallet.inline_keyboard[0][0].callback_data, "wallet:refresh:12")
         self.assertIn("Оновити", wallet.inline_keyboard[0][0].text)
+
+    def test_settings_keyboards_are_fully_ukrainian(self) -> None:
+        settings = _button_texts(build_settings_keyboard("Ukrainian"))
+        languages = _button_texts(build_language_keyboard("Ukrainian"))
+        self.assertEqual(settings, {"🌐 Мова", "💱 Валюта", "🕒 Часовий пояс", "⬅ Назад"})
+        self.assertEqual(languages, {"Українська", "Англійська", "⬅ Назад"})
 
 
 if __name__ == "__main__":

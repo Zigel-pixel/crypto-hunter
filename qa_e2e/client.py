@@ -72,6 +72,16 @@ class TelegramE2EClient:
     async def send_reply_button(self, message: Any, candidates: tuple[str, ...], *, timeout: int | None = None) -> ActionResult:
         return await self.send(select_reply_label(message, candidates), timeout=timeout)
 
+    async def send_recent_reply_action(self, candidates: tuple[str, ...], *, timeout: int | None = None) -> ActionResult:
+        """Use the newest fresh message that actually owns the reply action."""
+        for message in reversed(self.last_raw_messages):
+            try:
+                label = select_reply_label(message, candidates)
+            except LookupError:
+                continue
+            return await self.send(label, timeout=timeout)
+        raise LookupError("Requested reply-keyboard action is unavailable in fresh messages")
+
     async def click_inline(self, message: Any, *, text: str | None = None, callback_prefix: str | None = None, timeout: int | None = None) -> ActionResult:
         self._require_target()
         button = find_inline_button(message, text=text, callback_prefix=callback_prefix)
@@ -80,6 +90,16 @@ class TelegramE2EClient:
         started = time.monotonic()
         await message.click(data=getattr(button, "data", None))
         return await self.collect(baseline, f"click:{getattr(button, 'text', '')}", started, timeout=timeout, include_baseline=True)
+
+    async def click_recent_inline(self, *, callback_prefix: str, timeout: int | None = None) -> ActionResult:
+        """Click by stable callback data on the newest fresh owning message."""
+        for message in reversed(self.last_raw_messages):
+            try:
+                find_inline_button(message, callback_prefix=callback_prefix)
+            except LookupError:
+                continue
+            return await self.click_inline(message, callback_prefix=callback_prefix, timeout=timeout)
+        raise LookupError("Requested safe inline button was not found in fresh messages")
 
     async def collect(self, baseline: int, action: str, started: float, *, timeout: int | None = None, include_baseline: bool = False) -> ActionResult:
         self._require_target()

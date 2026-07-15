@@ -470,6 +470,20 @@ E2E coverage remained for the follow-up completion commit below.
   callback limit. The non-destructive E2E wallet scenario now exercises invalid,
   Ethereum, Tron, cancellation, and public-address-only warnings without saving.
 
+## Telegram E2E Live/localization reliability (2026-07-15)
+
+- Real Telegram evidence showed that selecting only the last collected raw
+  message was unsafe when fresh responses and edited media messages coexist.
+  E2E actions now search newest-to-oldest within the current action result for
+  the message that actually owns the stable callback or reply-keyboard action.
+- The Live product keyboard was already correct: BTC chart media retains asset,
+  15m/1h/4h/24h/7d, refresh, stop, and back callbacks. Regression tests keep
+  callback payloads within Telegram's limit and verify production ownership.
+- Settings and language keyboards now follow persisted English/Ukrainian state.
+  Ukrainian selection stores the canonical value, immediately rebuilds the
+  Ukrainian main keyboard, works idempotently for already-Ukrainian users, and
+  `/start` verifies persistence in the E2E scenario.
+
 Real Telegram E2E runs showed that direct handler/service tests were not sufficient to prove which aiogram route owned AI questions, Watchlist Add, and Live callbacks. Production dispatcher construction now lives in `app/dispatcher.py`, and the verified routes are registered before their broader feature routers.
 
 - Consultant questions in `ConsultantStates.entering_question` are owned by the dedicated `consultant_question` router and call `answer_consultant_question`. Market Analysis remains a separate explicit button and no longer shares ownership of question messages.
