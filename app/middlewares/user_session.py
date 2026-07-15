@@ -8,17 +8,28 @@ import aiosqlite
 from aiogram import BaseMiddleware, types
 from aiogram.exceptions import TelegramBadRequest
 
+from app.keyboards.main import control_labels
 from app.services.user_service import is_user_active
 
-ALLOWED_STOPPED_TEXTS = {
+ALLOWED_STOPPED_COMMANDS = {
     "/start",
     "/restart",
     "/stop",
-    "▶️ Start",
-    "🔄 Restart",
-    "⏹ Stop",
 }
+ALLOWED_STOPPED_TEXTS = frozenset(
+    label
+    for key in ("controls.start", "controls.restart", "controls.stop")
+    for label in control_labels(key)
+)
 logger = logging.getLogger(__name__)
+
+
+def _is_session_control(text: str | None) -> bool:
+    normalized = (text or "").strip()
+    if normalized in ALLOWED_STOPPED_TEXTS:
+        return True
+    command = normalized.split(maxsplit=1)[0].split("@", 1)[0] if normalized else ""
+    return command in ALLOWED_STOPPED_COMMANDS
 
 
 class UserSessionMiddleware(BaseMiddleware):
@@ -28,6 +39,9 @@ class UserSessionMiddleware(BaseMiddleware):
         event: types.TelegramObject,
         data: dict[str, Any],
     ) -> Any:
+        if isinstance(event, types.Message) and _is_session_control(event.text):
+            return await handler(event, data)
+
         user = data.get("event_from_user")
         try:
             active = user is None or await is_user_active(user.id)
@@ -38,9 +52,6 @@ class UserSessionMiddleware(BaseMiddleware):
             return await handler(event, data)
 
         if isinstance(event, types.Message):
-            text = (event.text or "").split(maxsplit=1)[0].split("@", 1)[0]
-            if text in ALLOWED_STOPPED_TEXTS:
-                return await handler(event, data)
             return None
 
         if isinstance(event, types.CallbackQuery):

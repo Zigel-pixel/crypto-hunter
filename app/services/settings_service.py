@@ -23,8 +23,14 @@ async def upsert_setting(telegram_id: int, category: str, value: str) -> None:
         await db.commit()
 
 
-async def get_setting(telegram_id: int, category: str) -> Optional[str]:
-    async with aiosqlite.connect(DB_NAME) as db:
+async def get_setting(
+    telegram_id: int,
+    category: str,
+    *,
+    timeout_seconds: float | None = None,
+) -> Optional[str]:
+    connect_kwargs = {} if timeout_seconds is None else {"timeout": timeout_seconds}
+    async with aiosqlite.connect(DB_NAME, **connect_kwargs) as db:
         cursor = await db.execute(
             "SELECT value FROM settings WHERE telegram_id = ? AND category = ?",
             (telegram_id, category),
@@ -35,6 +41,15 @@ async def get_setting(telegram_id: int, category: str) -> Optional[str]:
         return normalize_language(row[0]) if category == "language" else row[0]
 
 
-async def resolve_user_language(telegram_id: int) -> str:
+async def resolve_user_language(
+    telegram_id: int,
+    *,
+    timeout_seconds: float | None = None,
+) -> str:
     """Authoritative persisted language resolver for handlers and callbacks."""
-    return normalize_language(await get_setting(telegram_id, "language"))
+    value = await get_setting(
+        telegram_id,
+        "language",
+        timeout_seconds=timeout_seconds,
+    )
+    return normalize_language(value)

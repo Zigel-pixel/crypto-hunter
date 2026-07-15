@@ -5,8 +5,13 @@ import aiosqlite
 DB_NAME = "crypto.db"
 
 
-async def activate_user(telegram_id: int) -> None:
-    async with aiosqlite.connect(DB_NAME) as db:
+async def activate_user(
+    telegram_id: int,
+    *,
+    timeout_seconds: float | None = None,
+) -> None:
+    connect_kwargs = {} if timeout_seconds is None else {"timeout": timeout_seconds}
+    async with aiosqlite.connect(DB_NAME, **connect_kwargs) as db:
         await db.execute(
             """
             INSERT INTO users (telegram_id, is_active)

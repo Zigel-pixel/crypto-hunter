@@ -63,6 +63,8 @@ class E2EConfigTests(unittest.TestCase):
             "E2E_READINESS_TIMEOUT_SECONDS": "31",
             "E2E_PRODUCT_RESPONSE_SLA_SECONDS": "17",
             "E2E_MAX_SCENARIO_SECONDS": "181",
+            "E2E_HISTORY_RPC_TIMEOUT_SECONDS": "1.5",
+            "E2E_HISTORY_POLL_INTERVAL_SECONDS": "0.75",
         }
         with patch.dict(os.environ, values, clear=True):
             value = load_e2e_config(load_env_file=False)
@@ -70,6 +72,21 @@ class E2EConfigTests(unittest.TestCase):
         self.assertEqual(value.readiness_timeout, 31)
         self.assertEqual(value.product_response_sla, 17)
         self.assertEqual(value.max_scenario_seconds, 181)
+        self.assertEqual(value.history_rpc_timeout_seconds, 1.5)
+        self.assertEqual(value.history_poll_interval_seconds, 0.75)
+
+    def test_history_request_timing_cannot_consume_the_product_sla(self) -> None:
+        for name, value in (
+            ("E2E_HISTORY_RPC_TIMEOUT_SECONDS", "20"),
+            ("E2E_HISTORY_POLL_INTERVAL_SECONDS", "20"),
+        ):
+            with self.subTest(name=name), patch.dict(
+                os.environ,
+                BASE_ENV | {name: value},
+                clear=True,
+            ):
+                with self.assertRaises(E2EConfigError):
+                    load_e2e_config(load_env_file=False)
 
 
 class SelectorTests(unittest.TestCase):
@@ -112,10 +129,11 @@ class E2EClientTests(unittest.IsolatedAsyncioTestCase):
     async def test_product_clock_starts_after_outbound_send_completes(self) -> None:
         raw = AsyncMock()
         events = []
+        outgoing = Mock(id=11, date=datetime(2026, 7, 15, tzinfo=timezone.utc))
 
         async def send_message(*args, **kwargs):
             events.append("send_completed")
-            return Mock(id=11)
+            return outgoing
 
         raw.send_message.side_effect = send_message
         wrapper = TelegramE2EClient(config(), raw); wrapper.target = Mock(id=99)
@@ -136,10 +154,13 @@ class E2EClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertIs(result, expected)
         raw.send_message.assert_awaited_once_with(wrapper.target, "/start")
         collect_call = wrapper.collect.await_args
-        self.assertEqual(collect_call.args[:3], (10, "/start", 120.1))
+        self.assertEqual(collect_call.args[:3], (11, "/start", 120.1))
         self.assertEqual(collect_call.kwargs["send_started_at"], 100.1)
         self.assertEqual(collect_call.kwargs["scenario_started_at"], 80.0)
         self.assertEqual(collect_call.kwargs["readiness_completed_at"], 80.0)
+        self.assertIs(collect_call.kwargs["outgoing_message"], outgoing)
+        self.assertEqual(collect_call.kwargs["product_action_server_date"], outgoing.date)
+        wrapper.baseline.assert_not_awaited()
         self.assertEqual(events, ["clock:100.0", "clock:100.1", "send_completed", "clock:120.1"])
 
     async def test_outgoing_and_stale_messages_never_become_response_latency(self) -> None:
@@ -163,16 +184,23 @@ class E2EClientTests(unittest.IsolatedAsyncioTestCase):
                        edit_date=None, buttons=[[button]],
                        reply_markup=tl_types.ReplyKeyboardMarkup([tl_types.KeyboardButtonRow([button])]))
         raw.get_messages.return_value = [message]
-        clock = Mock()
-        clock.monotonic.side_effect = (100.0, 120.0, 120.0, 120.1,
-                                       121.2, 121.2, 121.3, 121.4)
-        with patch("qa_e2e.client.time", clock):
-            result = await wrapper.collect(10, "/start", 100.0, timeout=23,
-                                           scenario_started_at=80.0, readiness_completed_at=80.0)
-        self.assertAlmostEqual(result.messages[0].response_seconds, 20.1)
+        product_action_sent_at = time.monotonic() - 20.1
+        result = await wrapper.collect(
+            10, "/start", product_action_sent_at, timeout=23,
+            scenario_started_at=product_action_sent_at - 20.0,
+            readiness_completed_at=product_action_sent_at - 20.0,
+            settle_when=lambda messages: any(item.reply_buttons for item in messages),
+        )
+        self.assertGreaterEqual(result.messages[0].response_seconds, 20.0)
+        self.assertLess(result.messages[0].response_seconds, 20.5)
         self.assertEqual(result.messages[0].reply_buttons, ("📈 Курси",))
-        self.assertAlmostEqual(result.timing.first_response_at, 120.1)
-        self.assertAlmostEqual(result.timing.collection_deadline_at, 123.0)
+        self.assertAlmostEqual(
+            result.timing.first_response_at - product_action_sent_at,
+            result.messages[0].response_seconds,
+            places=3,
+        )
+        self.assertAlmostEqual(result.timing.collection_deadline_at, product_action_sent_at + 23)
+        self.assertEqual(result.collection_reason, "predicate_satisfied")
 
     async def test_in_flight_history_poll_cannot_overrun_collection_deadline(self) -> None:
         async def never_returns(*args, **kwargs):
@@ -213,7 +241,9 @@ class E2EClientTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_smoke_settle_gate_waits_past_plain_response_for_qualifying_keyboard(self) -> None:
         raw = AsyncMock()
-        wrapper = TelegramE2EClient(config(), raw); wrapper.target = Mock(id=99)
+        wrapper = TelegramE2EClient(
+            replace(config(), history_poll_interval_seconds=0.001), raw
+        ); wrapper.target = Mock(id=99)
         plain = Mock(id=11, out=False, sender_id=99, message="loading", media=None, date=None,
                      edit_date=None, buttons=None, reply_markup=None)
         button = tl_types.KeyboardButton("📈 Курси")
@@ -227,28 +257,25 @@ class E2EClientTests(unittest.IsolatedAsyncioTestCase):
         def messages(*args, **kwargs):
             nonlocal calls
             calls += 1
-            return [plain] if calls < 3 else [qualifying, plain]
+            return [plain] if calls == 1 else [qualifying, plain]
 
         raw.get_messages.side_effect = messages
-        clock = Mock()
-        clock.monotonic.side_effect = (
-            100.0,
-            100.1, 100.1, 100.2,
-            101.4, 101.4, 101.5,
-            102.0, 102.0, 102.1,
-            103.2, 103.2, 103.3,
-            103.4,
-        )
         expected = {"📈 курси"}
         settle_when = lambda evidence: any(
             {label.casefold() for label in item.reply_buttons} & expected for item in evidence
         )
-        with patch("qa_e2e.client.time", clock), patch("qa_e2e.client.asyncio.sleep", AsyncMock()):
-            result = await wrapper.collect(10, "/start", 100.0, timeout=5, settle_when=settle_when)
+        with patch("qa_e2e.client.asyncio.sleep", AsyncMock()):
+            result = await wrapper.collect(
+                10, "/start", time.monotonic(), timeout=1,
+                settle_when=settle_when,
+            )
         keyboard = _first_qualifying_reply_keyboard(result, ("📈 Курси",))
         self.assertIsNotNone(keyboard)
-        self.assertAlmostEqual(keyboard.response_seconds, 2.1)
-        self.assertGreaterEqual(calls, 4)
+        self.assertGreaterEqual(keyboard.response_seconds, 0.0)
+        self.assertLess(keyboard.response_seconds, 1.0)
+        self.assertEqual(calls, 2)
+        self.assertEqual(result.collection_poll_count, 2)
+        self.assertEqual(result.collection_reason, "predicate_satisfied")
 
     async def test_setup_duration_and_collection_window_do_not_become_product_latency(self) -> None:
         timing = ActionTiming(100.0, 100.0, 120.0, 120.1, 120.2, 120.7, 122.7,

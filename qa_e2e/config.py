@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 import os
 from pathlib import Path
 import re
@@ -40,6 +41,19 @@ def _int(name: str, default: int | None = None) -> int:
     return parsed
 
 
+def _float(name: str, default: float) -> float:
+    value = os.getenv(name, "").strip()
+    if not value:
+        return default
+    try:
+        parsed = float(value)
+    except ValueError as exc:
+        raise E2EConfigError(f"Invalid number configuration: {name}") from exc
+    if not math.isfinite(parsed) or parsed <= 0:
+        raise E2EConfigError(f"Configuration must be positive: {name}")
+    return parsed
+
+
 def _safe_path(name: str, default: str, root: Path) -> Path:
     raw = os.getenv(name, default).strip() or default
     candidate = Path(raw)
@@ -70,6 +84,24 @@ class E2EConfig:
     live_wait_seconds: int = 50
     readiness_timeout: int = 30
     product_response_sla: int = 20
+    history_rpc_timeout_seconds: float = 2.0
+    history_poll_interval_seconds: float = 1.0
+
+    def __post_init__(self) -> None:
+        if (
+            not math.isfinite(self.history_rpc_timeout_seconds)
+            or self.history_rpc_timeout_seconds <= 0
+        ):
+            raise E2EConfigError("History RPC timeout must be positive")
+        if (
+            not math.isfinite(self.history_poll_interval_seconds)
+            or self.history_poll_interval_seconds <= 0
+        ):
+            raise E2EConfigError("History poll interval must be positive")
+        if self.history_rpc_timeout_seconds >= self.product_response_sla:
+            raise E2EConfigError("History RPC timeout must be shorter than the product SLA")
+        if self.history_poll_interval_seconds >= self.product_response_sla:
+            raise E2EConfigError("History poll interval must be shorter than the product SLA")
 
 
 def load_e2e_config(*, load_env_file: bool = True, require_enabled: bool = True) -> E2EConfig:
@@ -95,4 +127,6 @@ def load_e2e_config(*, load_env_file: bool = True, require_enabled: bool = True)
         _int("E2E_MESSAGE_SETTLE_SECONDS", 2), _int("E2E_MAX_SCENARIO_SECONDS", 180),
         _bool("E2E_ALLOW_DESTRUCTIVE_SCENARIOS"), language, _int("E2E_LIVE_WAIT_SECONDS", 50),
         _int("E2E_READINESS_TIMEOUT_SECONDS", 30), _int("E2E_PRODUCT_RESPONSE_SLA_SECONDS", 20),
+        _float("E2E_HISTORY_RPC_TIMEOUT_SECONDS", 2.0),
+        _float("E2E_HISTORY_POLL_INTERVAL_SECONDS", 1.0),
     )

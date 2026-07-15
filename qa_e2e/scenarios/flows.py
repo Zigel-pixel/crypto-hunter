@@ -4,11 +4,12 @@ import asyncio
 import re
 import time
 from collections.abc import Awaitable, Callable
+from datetime import datetime, timezone
 
 from qa_bot.models import CheckResult, FailureCategory, NamedAssertion, Scenario, Severity
 from qa_e2e.client import TelegramE2EClient
 from qa_e2e.config import E2EConfig
-from qa_e2e.evidence import contains_raw_error
+from qa_e2e.evidence import contains_raw_error, sanitize_text
 
 PUBLIC_EVM_TEST_ADDRESS = "0x000000000000000000000000000000000000dEaD"
 PUBLIC_TRON_TEST_ADDRESS = "TXLAQ63Xg1NAzckPwKHvzw7CSEmLMEqcdj"
@@ -89,18 +90,25 @@ def build_scenarios(client: TelegramE2EClient, config: E2EConfig) -> tuple[Scena
         actual = (f"messages={len(result.messages)}, first_qualifying_id="
                   f"{first_qualifying.message_id if first_qualifying else None}, qualifying_latency={qualifying_latency}, "
                   f"reply={latest.reply_buttons if latest else ()}, inline={latest.inline_buttons if latest else ()}; "
-                  f"{_timing_evidence(result, qualifying_latency, config.product_response_sla, config.max_scenario_seconds)}")
+                  f"{_timing_evidence(result, qualifying_latency, config.product_response_sla, config.max_scenario_seconds)}; "
+                  f"{_telegram_timing_diagnostics(result, first_qualifying)}")
         category = FailureCategory.PRODUCT_RESPONSE_TIMEOUT if failed == "response_within_product_sla" else FailureCategory.PRODUCT_ASSERTION_FAILED
-        return CheckResult(failed is None, actual, _evidence(result), category if failed else None, failed, assertions)
+        return CheckResult(failed is None, actual, _smoke_diagnostic_details(result),
+                           category if failed else None, failed, assertions)
 
     async def smoke_sessions():
         parts = []
+        expected_actions = ("📈 Rates", "📈 Курси")
         for command in ("/restart", "/stop", "/start"):
-            result = await client.send(command)
+            settle_when = (
+                (lambda messages: _contains_expected_reply_keyboard(messages, expected_actions))
+                if command == "/start" else (lambda messages: bool(messages))
+            )
+            result = await client.send(command, settle_when=settle_when)
             parts.append(f"{command}:{len(result.messages)}")
             if not result.messages or any(contains_raw_error(item.text) for item in result.messages):
                 return False, ", ".join(parts), _evidence(result)
-            if command == "/start" and _latest_reply_keyboard(result, ("📈 Rates", "📈 Курси")) is None:
+            if command == "/start" and _latest_reply_keyboard(result, expected_actions) is None:
                 return False, ", ".join(parts), "Recovery readiness probe did not restore the safe main keyboard"
         return True, ", ".join(parts), "Session commands responded without technical errors"
 
@@ -245,6 +253,155 @@ def _timing_evidence(result, qualifying_latency: float | None = None,
         f"overall_scenario_timeout={overall_timeout if overall_timeout is not None else 'unknown'}s",
         f"overall_duration={result.total_seconds:.3f}s",
     ))
+
+
+def _telegram_timing_diagnostics(result, qualifying) -> str:
+    """Render server timestamps as diagnostics while keeping SLA clocks monotonic."""
+    timing = result.timing
+    action_server_date = timing.product_action_server_date if timing is not None else None
+    qualifying_server_date = qualifying.timestamp if qualifying is not None else None
+    qualifying_observed_at = getattr(qualifying, "first_observed_at", None)
+    if qualifying_observed_at is None and timing is not None and qualifying is not None:
+        qualifying_observed_at = timing.product_action_sent_at + qualifying.response_seconds
+
+    earliest_server_date = result.earliest_server_date
+    if earliest_server_date is None:
+        dates = [message.timestamp for message in result.messages
+                 if isinstance(message.timestamp, datetime)]
+        earliest_server_date = min(dates, key=_utc_datetime, default=None)
+    earliest_observation_at = result.earliest_observation_at
+    if earliest_observation_at is None:
+        observations = [message.first_observed_at for message in result.messages
+                        if message.first_observed_at is not None]
+        earliest_observation_at = min(observations, default=None)
+
+    return "; ".join((
+        f"product_action_server_timestamp={_server_timestamp(action_server_date)}",
+        f"qualifying_response_server_timestamp={_server_timestamp(qualifying_server_date)}",
+        f"telegram_server_delta_diagnostic={_server_delta(action_server_date, qualifying_server_date)}",
+        f"qualifying_first_local_observation={_local_observation_offset(timing, qualifying_observed_at)}",
+        f"earliest_telegram_server_timestamp={_server_timestamp(earliest_server_date)}",
+        f"earliest_local_observation={_local_observation_offset(timing, earliest_observation_at)}",
+        f"collection_poll_count={_poll_count(result)}",
+        f"history_rpc_timeout_count={sum(poll.outcome == 'timeout' for poll in result.polls)}",
+        f"batch_observation_precision_limited={int(any(poll.batch_observation_limited for poll in result.polls))}",
+        f"final_collection_reason={_diagnostic_token(result.collection_reason)}",
+    ))
+
+
+def _smoke_diagnostic_details(result) -> str:
+    """Keep detailed collection evidence compact enough for redacted QA reports."""
+    return "; ".join((
+        f"final_collection_reason={_diagnostic_token(result.collection_reason)}",
+        f"collection_poll_count={_poll_count(result)}",
+        f"collection_poll_trace={_bounded_trace(_poll_entries(result), 700)}",
+        f"message_observations={_bounded_trace(_observation_entries(result), 600)}",
+        f"accepted_messages={_bounded_text(_evidence(result), 350)}",
+    ))
+
+
+def _poll_entries(result) -> tuple[str, ...]:
+    timing = result.timing
+    entries = []
+    for poll in result.polls:
+        entries.append(
+            f"p{poll.iteration}(start={_local_observation_offset(timing, poll.rpc_started_at)},"
+            f"end={_local_observation_offset(timing, poll.rpc_finished_at)},"
+            f"duration={poll.rpc_duration_seconds:.3f}s,"
+            f"outcome={_diagnostic_token(poll.outcome)},"
+            f"ids={_compact_ids(poll.discovered_message_ids)},"
+            f"source={_diagnostic_token(poll.observation_source)},"
+            f"batch_limited={int(poll.batch_observation_limited)},"
+            f"exception={_diagnostic_token(poll.exception_type or 'none')})"
+        )
+    return tuple(entries)
+
+
+def _observation_entries(result) -> tuple[str, ...]:
+    timing = result.timing
+    entries = []
+    for observation in result.observations:
+        entries.append(
+            f"m{observation.message_id}(sender_match={int(observation.expected_sender_match)},"
+            f"outgoing={int(observation.outgoing)},"
+            f"server={_server_timestamp(observation.telegram_date)},"
+            f"local={_local_observation_offset(timing, observation.first_observed_at)},"
+            f"poll={observation.poll_iteration},"
+            f"source={_diagnostic_token(observation.observation_source)},"
+            f"markup={_diagnostic_token(observation.markup_kind)},"
+            f"accepted={int(observation.accepted)},"
+            f"excluded={_diagnostic_token(observation.exclusion_reason or 'none')})"
+        )
+    return tuple(entries)
+
+
+def _bounded_trace(entries: tuple[str, ...], limit: int) -> str:
+    if not entries:
+        return "none"
+    complete = "|".join(entries)
+    if len(complete) <= limit:
+        return complete
+    maximum_each_side = min(5, len(entries) // 2)
+    for each_side in range(maximum_each_side, 0, -1):
+        omitted = len(entries) - (2 * each_side)
+        marker = f"...({omitted}_entries_omitted)..."
+        candidate = "|".join((*entries[:each_side], marker, *entries[-each_side:]))
+        if len(candidate) <= limit:
+            return candidate
+    return f"{len(entries)}_entries_omitted_for_compactness"
+
+
+def _bounded_text(value: str, limit: int) -> str:
+    if len(value) <= limit:
+        return value
+    marker = "...[diagnostics_omitted]..."
+    keep = max(0, (limit - len(marker)) // 2)
+    tail = value[-keep:] if keep else ""
+    return f"{value[:keep]}{marker}{tail}"
+
+
+def _compact_ids(values: tuple[int, ...]) -> str:
+    if not values:
+        return "none"
+    if len(values) <= 10:
+        return ",".join(str(value) for value in values)
+    omitted = len(values) - 8
+    return ",".join((*map(str, values[:6]), f"...+{omitted}", *map(str, values[-2:])))
+
+
+def _poll_count(result) -> int:
+    return result.collection_poll_count or len(result.polls)
+
+
+def _local_observation_offset(timing, value: float | None) -> str:
+    if value is None or timing is None:
+        return "none"
+    return _offset(timing.offset(value))
+
+
+def _server_timestamp(value: datetime | None) -> str:
+    if not isinstance(value, datetime):
+        return "none"
+    normalized = _utc_datetime(value)
+    return normalized.isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+def _server_delta(action_date: datetime | None, response_date: datetime | None) -> str:
+    if not isinstance(action_date, datetime) or not isinstance(response_date, datetime):
+        return "none_diagnostic_only"
+    seconds = (_utc_datetime(response_date) - _utc_datetime(action_date)).total_seconds()
+    return f"{seconds:+.3f}s_diagnostic_only"
+
+
+def _utc_datetime(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _diagnostic_token(value: object) -> str:
+    token = re.sub(r"[^A-Za-z0-9_.-]", "_", sanitize_text(value))[:40]
+    return token or "unknown"
 
 
 def _offset(value: float | None) -> str:
