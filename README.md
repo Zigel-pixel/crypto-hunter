@@ -55,6 +55,27 @@ python -m pytest -q tests/test_wallet_addresses.py tests/test_wallet_discovery.p
 python -m qa_e2e list
 ```
 
+## Watchlist charts and language
+
+Every saved Watchlist asset has a localized Chart action backed by the shared
+CoinGecko history cache and PNG renderer. Charts support 15m, 1h, 4h, 24h, and
+7d callbacks using provider IDs. Back returns to Watchlist; these static chart
+views do not start or replace the Rates Live refresh task.
+
+Language persistence is canonical: SQLite stores `uk` or `en`, while the
+authoritative resolver returns the existing runtime forms `Ukrainian` or
+`English` for compatibility. Legacy values (`ua`, `ukrainian`, display labels,
+and casing variants) normalize at the service boundary. Telegram client
+language is not consulted after an explicit setting exists.
+
+News translation is optional and fail-open. English content bypasses
+translation. Ukrainian uses the bounded translation-service provider seam when
+configured; otherwise the original headline/summary remains available with a
+localized notice. Translation calls use an eight-second timeout, concurrency
+limit, concurrent-request deduplication, a one-hour TTL, 256-entry LRU bound,
+and safe text-length limits. URLs, sources, dates, and absent summaries are
+preserved.
+
 Crypto Hunter is an MVP Telegram bot for cryptocurrency market tracking, portfolio utilities, alerts, news, and read-only public-wallet monitoring. Wallet features accept public addresses only. Never send a seed phrase, private key, password, or recovery phrase.
 
 ## Features

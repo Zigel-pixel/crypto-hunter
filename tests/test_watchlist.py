@@ -8,7 +8,8 @@ from unittest.mock import AsyncMock, patch
 
 import aiosqlite
 
-from app.handlers.favorites import _detail_text, _watchlist_text, watchlist_add
+from app.handlers.favorites import _detail_text, _show_watchlist_chart, _watchlist_text, watchlist_add
+from app.keyboards.favorites import build_watchlist_chart_keyboard, build_watchlist_keyboard
 from app.integrations.coingecko.market import CoinSnapshot
 from app.services import favorites_service
 from app.services.favorites_service import add_favorite, get_favorites, remove_favorite
@@ -88,7 +89,7 @@ class WatchlistHandlerTests(unittest.IsolatedAsyncioTestCase):
         message = SimpleNamespace(text="watchlist", caption=None)
         callback = SimpleNamespace(data="watchlist:add", message=message, from_user=SimpleNamespace(id=1), answer=AsyncMock())
         state = SimpleNamespace(set_state=AsyncMock())
-        with patch("app.handlers.favorites.get_setting", AsyncMock(return_value="English")):
+        with patch("app.handlers.favorites.resolve_user_language", AsyncMock(return_value="English")):
             message.answer = AsyncMock()
             await watchlist_add(callback, state)
         markup = message.answer.await_args.kwargs["reply_markup"]
@@ -104,9 +105,31 @@ class WatchlistHandlerTests(unittest.IsolatedAsyncioTestCase):
         message = SimpleNamespace(answer=AsyncMock())
         callback = SimpleNamespace(data="watchlist:add", message=message, from_user=SimpleNamespace(id=1), answer=AsyncMock())
         state = SimpleNamespace(set_state=AsyncMock())
-        with patch("app.handlers.favorites.get_setting", AsyncMock(return_value="Ukrainian")):
+        with patch("app.handlers.favorites.resolve_user_language", AsyncMock(return_value="Ukrainian")):
             await watchlist_add(callback, state)
         self.assertIn("Оберіть популярний актив", message.answer.await_args.args[0])
+
+    def test_every_asset_has_safe_provider_id_chart_action(self) -> None:
+        assets = list(ASSET_REGISTRY[:5])
+        markup = build_watchlist_keyboard(assets, "Ukrainian")
+        callbacks = [button.callback_data for row in markup.inline_keyboard for button in row]
+        for asset in assets:
+            self.assertIn(f"watchlist:chart:{asset.provider_id}:1h", callbacks)
+        self.assertTrue(all(len(value.encode()) <= 64 for value in callbacks))
+
+    def test_chart_timeframes_preserve_watchlist_origin(self) -> None:
+        markup = build_watchlist_chart_keyboard("bitcoin", "4h", "Ukrainian")
+        callbacks = [button.callback_data for row in markup.inline_keyboard for button in row]
+        self.assertIn("watchlist:chart:bitcoin:4h", callbacks)
+        self.assertEqual(callbacks[-1], "watchlist:overview")
+
+    async def test_unavailable_chart_history_is_localized(self) -> None:
+        message = SimpleNamespace(text="x", caption=None)
+        with patch("app.handlers.favorites.build_timeframe_chart", AsyncMock(return_value=None)), patch(
+            "app.handlers.favorites.safe_update_message", AsyncMock()
+        ) as update:
+            await _show_watchlist_chart(message, "bitcoin", "1h", "Ukrainian")
+        self.assertIn("недостатньо даних", update.await_args.args[1])
 
 
 if __name__ == "__main__":

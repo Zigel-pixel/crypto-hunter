@@ -92,9 +92,18 @@ def build_scenarios(client: TelegramE2EClient, config: E2EConfig) -> tuple[Scena
 
     async def favorites():
         opened = await _start_and_open(client, ("⭐ Обране", "⭐ Watchlist", "⭐ Favorites"))
+        try:
+            chart = await client.click_recent_inline(callback_prefix="watchlist:chart:", timeout=config.long_timeout)
+        except LookupError:
+            chart = None
+        if chart is not None:
+            labels = tuple(label for item in chart.messages for label in item.inline_buttons)
+            media = any(item.media_type for item in chart.messages)
+            ok = media and all(any(value in label for label in labels) for value in ("15m", "1h", "4h", "24h", "7d"))
+            return ok, f"chart_media={media}, timeframes={labels}", _evidence(chart)
         raw = client.last_raw_messages[-1] if client.last_raw_messages else None
         if raw is None: return False, "Watchlist message unavailable", _evidence(opened)
-        add = await client.click_inline(raw, callback_prefix="watchlist:add")
+        add = await client.click_recent_inline(callback_prefix="watchlist:add")
         labels = tuple(label for item in add.messages for label in item.inline_buttons)
         ok = "Bitcoin (BTC)" in labels and "Ethereum (ETH)" in labels and "Solana (SOL)" in labels
         return ok, f"popular labels={labels}", _evidence(add)
@@ -160,7 +169,7 @@ def build_scenarios(client: TelegramE2EClient, config: E2EConfig) -> tuple[Scena
         _scenario(client, config, "e2e.smoke.sessions", "Restart/Stop/Start recovery", "smoke", "Every session command responds without raw errors", smoke_sessions, severity=Severity.CRITICAL),
         _scenario(client, config, "e2e.localization.uk", "Persist Ukrainian language", "localization", "Ukrainian main keyboard is visible after selection", localization),
         _scenario(client, config, "e2e.live.chart", "Real Live chart media", "live", "BTC chart media arrives with timeframe metadata", live),
-        _scenario(client, config, "e2e.favorites.popular", "Popular favorite buttons", "favorites", "Bitcoin (BTC) appears as an exact choice", favorites),
+        _scenario(client, config, "e2e.favorites.popular", "Watchlist chart or popular setup", "favorites", "A saved asset chart renders, or the empty-state add flow offers Bitcoin", favorites),
         _scenario(client, config, "e2e.alerts.safety", "Scoped alert safety", "alerts", "No unrelated alerts are modified", alerts),
         _scenario(client, config, "e2e.ai.stablecoins", "Stablecoin answer relevance", "ai", "Response discusses stablecoins without raw errors", ai),
         _scenario(client, config, "e2e.wallets.public_only", "Public wallet safety", "wallets", "Only a safe public address is used and the bot responds", wallets),

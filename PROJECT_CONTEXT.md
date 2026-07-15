@@ -550,6 +550,21 @@ python -m qa_e2e run all
   predicate, retry count, and verified rollback status. Python orchestration,
   the PowerShell 5.1 template, and `.env.example` now block/rollback on full E2E
   failure by default.
+
+## Beta Watchlist/localization/news quality pass (2026-07-15)
+
+- Watchlist rows and detail screens expose provider-ID chart callbacks. The
+  shared CoinGecko history/cache and PNG renderer provide 15m–7d charts; Back
+  remains Watchlist-scoped and no Rates Live task is created or replaced.
+- Settings persistence canonicalizes language to `uk`/`en`. A single service
+  boundary normalizes legacy values and returns compatibility display values to
+  handlers, preventing raw stored forms from causing English fallback.
+- News RSS summaries are retained when present. Optional Ukrainian translation
+  is isolated behind a bounded async service with timeout, concurrency control,
+  TTL/LRU cache, and in-flight deduplication. Since no AI translation provider
+  exists in the repository, the default remains a localized, non-blocking
+  original-text fallback; URLs, dates, sources, and missing summaries are never
+  invented or translated.
 - One-shot QA notifications use only the existing admin token/ID environment configuration and bounded retries. Notification failure is non-fatal and no second QA polling process starts. Read-only commands are `/deploy_status`, `/deploy_last`, `/deploy_reports`, and `/deploy_failed_commit`; no deploy/shell/rollback Telegram command exists.
 - Runtime state, reports, logs, candidate data, virtual environments, and locks are ignored. `requirements-dev.txt` explicitly provides pytest for unattended candidate verification.
 

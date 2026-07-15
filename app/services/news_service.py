@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import ssl
+import re
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from html import escape, unescape
@@ -50,6 +51,7 @@ async def get_news(limit: int = NEWS_LIMIT) -> list[NewsItem]:
                 title=unescape(title).strip(),
                 url=url.strip(),
                 published_at=_parse_date(_element_text(element.find("pubDate"))),
+                summary=_clean_summary(_element_text(element.find("description"))),
             )
         )
         if len(items) >= max(1, limit):
@@ -71,6 +73,10 @@ def build_news_text(items: list[NewsItem], language: str = "English") -> str:
         )
         if published:
             lines.append(f"   🕒 {published}")
+        if item.summary:
+            lines.append(f"   {escape(item.summary)}")
+        if language == "Ukrainian" and item.translation_fallback:
+            lines.append("   ℹ️ Переклад недоступний — показано оригінал.")
         lines.append("")
     lines.append(translate("news.source", language))
     return "\n".join(lines)
@@ -94,3 +100,10 @@ def _parse_date(value: str) -> datetime | None:
 
 def _format_date(value: datetime | None) -> str:
     return "" if value is None else value.strftime("%d.%m %H:%M UTC")
+
+
+def _clean_summary(value: str) -> str | None:
+    if not value:
+        return None
+    text = " ".join(re.sub(r"<[^>]+>", " ", unescape(value)).split())
+    return text[:600] or None

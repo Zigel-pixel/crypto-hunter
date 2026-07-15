@@ -9,14 +9,16 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
 from app.handlers.common import user_main_keyboard
-from app.handlers.message_updates import safe_update_message
+from app.handlers.message_updates import safe_update_message, safe_update_photo
 from app.keyboards.favorites import (
     build_watchlist_detail_keyboard,
     build_watchlist_keyboard,
     build_watchlist_remove_keyboard,
     build_watchlist_search_results,
     build_popular_asset_keyboard,
+    build_watchlist_chart_keyboard,
 )
+from app.services.chart_service import build_timeframe_chart
 from app.services.asset_service import get_asset, list_supported_assets, search_assets
 from app.models.asset import AssetDefinition
 from app.services.favorites_service import (
@@ -33,7 +35,8 @@ from app.services.market_service import (
     market_data_is_stale,
     market_refresh_in_progress,
 )
-from app.services.settings_service import get_setting
+from app.services.settings_service import get_setting, resolve_user_language
+from aiogram.types import BufferedInputFile
 from app.utils.timezones import format_market_time
 
 router = Router(name="favorites")
@@ -54,7 +57,7 @@ async def watchlist_entry(message: types.Message, state: FSMContext) -> None:
 
 @router.message(WatchlistStates.searching)
 async def watchlist_search(message: types.Message, state: FSMContext) -> None:
-    language = await get_setting(message.from_user.id, "language") or "English"
+    language = await resolve_user_language(message.from_user.id)
     results = search_assets(message.text or "")
     if not results:
         await message.answer("Не знайдено монету за цією назвою або тикером." if language == "Ukrainian" else "No supported coin matched that name or ticker. Try again.")
@@ -72,7 +75,7 @@ async def watchlist_add(callback: types.CallbackQuery, state: FSMContext) -> Non
         await callback.answer()
         return
     await state.set_state(WatchlistStates.searching)
-    language = await get_setting(callback.from_user.id, "language") or "English"
+    language = await resolve_user_language(callback.from_user.id)
     popular_symbols = {"BTC", "ETH", "SOL", "BNB", "XRP", "DOGE", "ADA", "TRX"}
     popular = [asset for asset in list_supported_assets() if asset.symbol in popular_symbols]
     text = "Оберіть популярний актив або введіть назву/тикер:" if language == "Ukrainian" else "Choose a popular asset or type any name/ticker:"
@@ -88,6 +91,7 @@ async def watchlist_callback(
         await callback.answer()
         return
     data = callback.data or ""
+    language = await resolve_user_language(callback.from_user.id)
     try:
         if data in {"watchlist:overview", "watchlist:refresh"}:
             if data.endswith("refresh") and market_refresh_in_progress():
@@ -102,6 +106,12 @@ async def watchlist_callback(
             )
             if not data.endswith("refresh"):
                 await callback.answer()
+            return
+
+        if data.startswith("watchlist:chart:"):
+            _, _, provider_id, timeframe = data.split(":", 3)
+            await _show_watchlist_chart(callback.message, provider_id, timeframe, language)
+            await callback.answer()
             return
 
         if data == "watchlist:remove":
@@ -175,13 +185,14 @@ async def _send_watchlist(message: types.Message) -> None:
         assets = await get_favorite_assets(message.from_user.id)
         _, snapshots = await fetch_market_snapshots()
         timezone_name = await get_setting(message.from_user.id, "timezone")
+        language = await resolve_user_language(message.from_user.id)
     except aiosqlite.Error as exc:
         logger.exception("Could not load Watchlist: %s", exc)
         await message.answer("Watchlist is temporarily unavailable.")
         return
     await message.answer(
-        _watchlist_text(assets, snapshots or {}, timezone_name=timezone_name),
-        reply_markup=build_watchlist_keyboard(assets),
+        _watchlist_text(assets, snapshots or {}, timezone_name=timezone_name, language=language),
+        reply_markup=build_watchlist_keyboard(assets, language),
     )
 
 
@@ -191,10 +202,11 @@ async def _update_watchlist(
     assets = await get_favorite_assets(telegram_id)
     _, snapshots = await fetch_market_snapshots(force_refresh=force_refresh)
     timezone_name = await get_setting(telegram_id, "timezone")
+    language = await resolve_user_language(telegram_id)
     await safe_update_message(
         message,
-        _watchlist_text(assets, snapshots or {}, timezone_name=timezone_name),
-        build_watchlist_keyboard(assets),
+        _watchlist_text(assets, snapshots or {}, timezone_name=timezone_name, language=language),
+        build_watchlist_keyboard(assets, language),
     )
 
 
@@ -203,14 +215,15 @@ def _watchlist_text(
     snapshots: dict[str, CoinSnapshot],
     *,
     timezone_name: str | None = None,
+    language: str = "English",
 ) -> str:
     if not assets:
-        return "⭐ Watchlist\n\nYou have no favorite coins yet."
-    lines = ["⭐ Watchlist", ""]
+        return "⭐ Обране\n\nУ вас ще немає обраних монет." if language == "Ukrainian" else "⭐ Watchlist\n\nYou have no favorite coins yet."
+    lines = ["⭐ Обране" if language == "Ukrainian" else "⭐ Watchlist", ""]
     for asset in assets:
         snapshot = snapshots.get(asset.provider_id)
         if snapshot is None:
-            lines.append(f"⚪ {asset.symbol} — unavailable")
+            lines.append(f"⚪ {asset.symbol} — {'недоступно' if language == 'Ukrainian' else 'unavailable'}")
             continue
         change = snapshot.change_24h
         marker = (
@@ -230,9 +243,9 @@ def _watchlist_text(
         [
             "",
             (
-                f"⚠️ Showing cached data from {updated}"
+                (f"⚠️ Показано кешовані дані від {updated}" if language == "Ukrainian" else f"⚠️ Showing cached data from {updated}")
                 if market_data_is_stale()
-                else f"🕒 Updated: {updated}"
+                else (f"🕒 Оновлено: {updated}" if language == "Ukrainian" else f"🕒 Updated: {updated}")
             ),
             "Source: CoinGecko",
         ]
@@ -262,9 +275,28 @@ async def _show_detail(
             snapshot,
             timezone_name=timezone_name,
             stale=market_data_is_stale(),
+            language=await resolve_user_language(telegram_id),
         ),
-        build_watchlist_detail_keyboard(asset.provider_id, asset.symbol),
+        build_watchlist_detail_keyboard(asset.provider_id, asset.symbol, await resolve_user_language(telegram_id)),
     )
+
+
+async def _show_watchlist_chart(message: types.Message, provider_id: str, timeframe: str, language: str) -> None:
+    asset = get_asset(provider_id)
+    if asset is None:
+        await safe_update_message(message, "Невідомий актив." if language == "Ukrainian" else "Unknown asset.", None)
+        return
+    result = await build_timeframe_chart(provider_id, asset.symbol, timeframe)
+    keyboard = build_watchlist_chart_keyboard(provider_id, timeframe, language)
+    if result is None:
+        text = "Для цього періоду недостатньо даних графіка." if language == "Ukrainian" else "Not enough chart history is available for this timeframe."
+        await safe_update_message(message, text, keyboard)
+        return
+    chart, points = result
+    first, latest = points[0][1], points[-1][1]
+    percent = ((latest - first) / first * 100) if first else 0
+    caption = f"📈 {asset.name} ({asset.symbol}) · {timeframe}\n\n${latest:,.4f}\n{percent:+.2f}%"
+    await safe_update_photo(message, BufferedInputFile(chart, filename=f"watchlist-{asset.symbol}-{timeframe}.png"), caption, keyboard)
 
 
 def _detail_text(
@@ -274,20 +306,21 @@ def _detail_text(
     *,
     timezone_name: str | None = None,
     stale: bool = False,
+    language: str = "English",
 ) -> str:
     if snapshot is None:
-        return f"{name} ({symbol})\n\nCurrent market data is unavailable."
+        return f"{name} ({symbol})\n\n" + ("Ринкові дані зараз недоступні." if language == "Ukrainian" else "Current market data is unavailable.")
     fields = [
         f"{name} ({symbol})",
         "",
-        f"Price: {format_price(snapshot.price)}",
+        f"{'Ціна' if language == 'Ukrainian' else 'Price'}: {format_price(snapshot.price)}",
         f"24h: {format_percent(snapshot.change_24h)}",
     ]
     optional = [
-        ("24h high", snapshot.high_24h, format_price),
-        ("24h low", snapshot.low_24h, format_price),
-        ("Market cap", snapshot.market_cap, format_compact_currency),
-        ("24h volume", snapshot.volume_24h, format_compact_currency),
+        ("Максимум 24г" if language == "Ukrainian" else "24h high", snapshot.high_24h, format_price),
+        ("Мінімум 24г" if language == "Ukrainian" else "24h low", snapshot.low_24h, format_price),
+        ("Капіталізація" if language == "Ukrainian" else "Market cap", snapshot.market_cap, format_compact_currency),
+        ("Обсяг 24г" if language == "Ukrainian" else "24h volume", snapshot.volume_24h, format_compact_currency),
     ]
     fields.extend(
         f"{label}: {formatter(value)}"
@@ -298,10 +331,10 @@ def _detail_text(
         [
             "",
             (
-                "⚠️ Showing cached data from "
+                ("⚠️ Показано кешовані дані від " if language == "Ukrainian" else "⚠️ Showing cached data from ") +
                 f"{format_market_time(snapshot.updated_at, timezone_name)}"
                 if stale
-                else "🕒 Updated: "
+                else ("🕒 Оновлено: " if language == "Ukrainian" else "🕒 Updated: ") +
                 f"{format_market_time(snapshot.updated_at, timezone_name)}"
             ),
             "Source: CoinGecko",

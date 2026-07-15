@@ -11,7 +11,7 @@ from app.keyboards.settings import (
     build_settings_keyboard,
     build_timezone_keyboard,
 )
-from app.services.settings_service import get_setting, upsert_setting
+from app.services.settings_service import get_setting, resolve_user_language, upsert_setting
 from app.handlers.common import user_main_keyboard
 from app.utils.i18n import normalize_language, translate
 
@@ -26,7 +26,7 @@ class SettingsStates(StatesGroup):
 
 
 async def _language(user_id: int) -> str:
-    return normalize_language(await get_setting(user_id, "language"))
+    return await resolve_user_language(user_id)
 
 
 @router.message(lambda message: message.text in action_labels(7))

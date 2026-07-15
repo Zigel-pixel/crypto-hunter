@@ -6,6 +6,10 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_LANGUAGE = "English"
 SUPPORTED_LANGUAGES = ("English", "Ukrainian")
+_LANGUAGE_ALIASES = {
+    "en": "English", "eng": "English", "english": "English", "англійська": "English",
+    "uk": "Ukrainian", "ua": "Ukrainian", "ukrainian": "Ukrainian", "українська": "Ukrainian",
+}
 
 _TRANSLATIONS: dict[str, dict[str, str]] = {
     "English": {
@@ -100,7 +104,13 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
 
 
 def normalize_language(language: str | None) -> str:
-    return language if language in SUPPORTED_LANGUAGES else DEFAULT_LANGUAGE
+    if language in SUPPORTED_LANGUAGES:
+        return language
+    return _LANGUAGE_ALIASES.get((language or "").strip().casefold(), DEFAULT_LANGUAGE)
+
+
+def canonical_language(language: str | None) -> str:
+    return "uk" if normalize_language(language) == "Ukrainian" else "en"
 
 
 def translate(key: str, language: str | None = None) -> str:
