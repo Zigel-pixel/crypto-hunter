@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from datetime import datetime, timezone
 import time
 from typing import Any
 
 from qa_e2e.config import E2EConfig
 from qa_e2e.evidence import sanitize_text
-from qa_e2e.models import ActionResult, ActiveReplyKeyboard, MessageEvidence
+from qa_e2e.models import ActionResult, ActionTiming, ActiveReplyKeyboard, MessageEvidence
 from qa_e2e.selectors import button_labels, ensure_safe_button, find_inline_button, hides_reply_keyboard, normalize_label, reply_keyboard_labels, reply_keyboard_rows, select_reply_label
 
 
@@ -64,12 +65,26 @@ class TelegramE2EClient:
         first = messages[0] if isinstance(messages, (list, tuple)) else messages
         return int(getattr(first, "id", 0))
 
-    async def send(self, text: str, *, timeout: int | None = None) -> ActionResult:
+    async def send(self, text: str, *, timeout: int | None = None,
+                   scenario_started_at: float | None = None,
+                   readiness_completed_at: float | None = None,
+                   settle_when: Callable[[tuple[MessageEvidence, ...]], bool] | None = None) -> ActionResult:
         self._require_target()
         baseline = await self.baseline()
-        started = time.monotonic()
+        boundary_captured_at = time.monotonic()
+        scenario_started_at = boundary_captured_at if scenario_started_at is None else scenario_started_at
+        readiness_completed_at = scenario_started_at if readiness_completed_at is None else readiness_completed_at
+        send_started_at = time.monotonic()
         await self.client.send_message(self.target, text)
-        return await self.collect(baseline, text, started, timeout=timeout)
+        product_action_sent_at = time.monotonic()
+        return await self.collect(
+            baseline, text, product_action_sent_at, timeout=timeout,
+            scenario_started_at=scenario_started_at,
+            readiness_completed_at=readiness_completed_at,
+            boundary_captured_at=boundary_captured_at,
+            send_started_at=send_started_at,
+            settle_when=settle_when,
+        )
 
     async def send_reply_button(self, message: Any, candidates: tuple[str, ...], *, timeout: int | None = None) -> ActionResult:
         return await self.send(select_reply_label(message, candidates), timeout=timeout)
@@ -90,9 +105,16 @@ class TelegramE2EClient:
         button = find_inline_button(message, text=text, callback_prefix=callback_prefix)
         ensure_safe_button(button)
         baseline = await self.baseline()
-        started = time.monotonic()
+        boundary_captured_at = time.monotonic()
+        send_started_at = time.monotonic()
         await message.click(data=getattr(button, "data", None))
-        return await self.collect(baseline, f"click:{getattr(button, 'text', '')}", started, timeout=timeout, include_baseline=True)
+        product_action_sent_at = time.monotonic()
+        return await self.collect(baseline, f"click:{getattr(button, 'text', '')}", product_action_sent_at,
+                                  timeout=timeout, include_baseline=True,
+                                  scenario_started_at=boundary_captured_at,
+                                  readiness_completed_at=boundary_captured_at,
+                                  boundary_captured_at=boundary_captured_at,
+                                  send_started_at=send_started_at)
 
     async def click_recent_inline(self, *, callback_prefix: str, timeout: int | None = None) -> ActionResult:
         """Click by stable callback data on the newest fresh owning message."""
@@ -104,34 +126,70 @@ class TelegramE2EClient:
             return await self.click_inline(message, callback_prefix=callback_prefix, timeout=timeout)
         raise LookupError("Requested safe inline button was not found in fresh messages")
 
-    async def collect(self, baseline: int, action: str, started: float, *, timeout: int | None = None, include_baseline: bool = False) -> ActionResult:
+    async def collect(self, baseline: int, action: str, product_action_sent_at: float, *, timeout: int | None = None,
+                      include_baseline: bool = False, scenario_started_at: float | None = None,
+                      readiness_completed_at: float | None = None, boundary_captured_at: float | None = None,
+                      send_started_at: float | None = None,
+                      settle_when: Callable[[tuple[MessageEvidence, ...]], bool] | None = None) -> ActionResult:
         self._require_target()
-        deadline = started + (timeout or self.config.default_timeout)
-        seen: dict[tuple[int, str, str | None, tuple[str, ...]], MessageEvidence] = {}
+        scenario_started_at = product_action_sent_at if scenario_started_at is None else scenario_started_at
+        readiness_completed_at = product_action_sent_at if readiness_completed_at is None else readiness_completed_at
+        boundary_captured_at = product_action_sent_at if boundary_captured_at is None else boundary_captured_at
+        send_started_at = product_action_sent_at if send_started_at is None else send_started_at
+        deadline = product_action_sent_at + (timeout or self.config.default_timeout)
+        seen: dict[tuple[int, str, str | None, tuple[str, ...], tuple[str, ...]], MessageEvidence] = {}
         raw_seen: dict[int, Any] = {}
+        outgoing_ids: set[int] = set()
+        first_response_at: float | None = None
         last_change = time.monotonic()
         while time.monotonic() < deadline:
             minimum = max(0, baseline - 1) if include_baseline else baseline
-            messages = await self.client.get_messages(self.target, min_id=minimum, limit=50)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            try:
+                messages = await asyncio.wait_for(
+                    self.client.get_messages(self.target, min_id=minimum, limit=50),
+                    timeout=remaining,
+                )
+            except asyncio.TimeoutError:
+                break
             now = time.monotonic()
             for message in reversed(tuple(messages or ())):
                 message_id = int(getattr(message, "id", 0))
                 if message_id < baseline or (message_id == baseline and not include_baseline):
                     continue
-                evidence = self._evidence(message, now - started, edited=bool(getattr(message, "edit_date", None)))
+                if getattr(message, "out", False) is True:
+                    outgoing_ids.add(message_id)
+                    continue
+                sender_id = getattr(message, "sender_id", None)
+                target_id = getattr(self.target, "id", None)
+                if isinstance(sender_id, int) and isinstance(target_id, int) and sender_id != target_id:
+                    continue
+                evidence = self._evidence(message, now - product_action_sent_at, edited=bool(getattr(message, "edit_date", None)))
                 self._process_reply_keyboard(message)
                 raw_seen[message_id] = message
-                key = (message_id, evidence.text, evidence.media_type, evidence.inline_buttons)
+                key = (message_id, evidence.text, evidence.media_type,
+                       evidence.inline_buttons, evidence.reply_buttons)
                 if key not in seen:
                     seen[key] = evidence
+                    if first_response_at is None:
+                        first_response_at = now
                     last_change = now
-            if seen and now - last_change >= self.config.settle_seconds:
+            collected = tuple(seen.values())
+            ready_to_settle = bool(collected) and (settle_when is None or settle_when(collected))
+            if ready_to_settle and now - last_change >= self.config.settle_seconds:
                 break
             await asyncio.sleep(0.25)
         ordered = tuple(sorted(seen.values(), key=lambda item: (item.message_id, item.edited)))
         self.last_raw_messages = tuple(raw_seen[key] for key in sorted(raw_seen))
+        finished_at = time.monotonic()
         first = min((item.response_seconds for item in ordered), default=None)
-        return ActionResult(action, baseline, ordered, first, time.monotonic() - started)
+        timing = ActionTiming(scenario_started_at, readiness_completed_at, boundary_captured_at,
+                              send_started_at, product_action_sent_at, first_response_at, finished_at,
+                              collection_deadline_at=deadline)
+        return ActionResult(action, baseline, ordered, first, finished_at - scenario_started_at,
+                            timing, tuple(sorted(outgoing_ids)))
 
     def _evidence(self, message: Any, elapsed: float, *, edited: bool) -> MessageEvidence:
         media = getattr(message, "media", None)
@@ -151,7 +209,7 @@ class TelegramE2EClient:
         return str(value)
 
     def _process_reply_keyboard(self, message: Any) -> None:
-        if getattr(message, "out", False):
+        if getattr(message, "out", False) is True:
             return
         key = self._target_key()
         rows = reply_keyboard_rows(message)

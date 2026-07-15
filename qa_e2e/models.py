@@ -23,6 +23,23 @@ class ActionResult:
     messages: tuple[MessageEvidence, ...]
     first_response_seconds: float | None
     total_seconds: float
+    timing: ActionTiming | None = None
+    outgoing_message_ids: tuple[int, ...] = ()
+
+
+@dataclass(frozen=True)
+class ActionTiming:
+    scenario_started_at: float
+    readiness_completed_at: float
+    boundary_captured_at: float
+    send_started_at: float
+    product_action_sent_at: float
+    first_response_at: float | None
+    collection_finished_at: float
+    collection_deadline_at: float | None = None
+
+    def offset(self, value: float | None) -> float | None:
+        return None if value is None else value - self.scenario_started_at
 
 
 @dataclass(frozen=True)

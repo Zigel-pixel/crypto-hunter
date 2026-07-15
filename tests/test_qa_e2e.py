@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 from datetime import datetime, timezone
 import os
 from pathlib import Path
@@ -10,14 +11,16 @@ import unittest
 from unittest.mock import AsyncMock, Mock, patch
 from telethon.tl import types as tl_types
 
-from qa_bot.models import RunReport, ScenarioResult, Severity, Status
+from qa_bot.models import FailureCategory, RunReport, ScenarioResult, Severity, Status
+from qa_bot.scenario_runner import ScenarioRunner
 from qa_e2e.auth import authorize
 from qa_e2e.client import TargetNotBot, TelegramE2EClient
 from qa_e2e.config import E2EConfig, E2EConfigError, load_e2e_config
 from qa_e2e.evidence import sanitize_text
-from qa_e2e.models import ActionResult, MessageEvidence
+from qa_e2e.models import ActionResult, ActionTiming, MessageEvidence
+from qa_e2e.runner import E2ERunner
 from qa_e2e.selectors import UnsafeButtonError, button_labels, find_inline_button, reply_keyboard_labels, select_reply_label
-from qa_e2e.scenarios.flows import _latest_reply_keyboard, _start_and_open
+from qa_e2e.scenarios.flows import _first_qualifying_reply_keyboard, _latest_reply_keyboard, _start_and_open, _timing_evidence, build_scenarios
 from qa_e2e.storage import ARTIFACT_RE, E2EStorage, REPORT_RE
 
 
@@ -53,6 +56,20 @@ class E2EConfigTests(unittest.TestCase):
             value = load_e2e_config(load_env_file=False)
         self.assertEqual(value.target_username, "CryptoHunterTestBot")
         self.assertFalse(value.allow_destructive)
+
+    def test_readiness_product_sla_and_overall_timeouts_are_independent(self) -> None:
+        values = BASE_ENV | {
+            "E2E_DEFAULT_TIMEOUT_SECONDS": "44",
+            "E2E_READINESS_TIMEOUT_SECONDS": "31",
+            "E2E_PRODUCT_RESPONSE_SLA_SECONDS": "17",
+            "E2E_MAX_SCENARIO_SECONDS": "181",
+        }
+        with patch.dict(os.environ, values, clear=True):
+            value = load_e2e_config(load_env_file=False)
+        self.assertEqual(value.default_timeout, 44)
+        self.assertEqual(value.readiness_timeout, 31)
+        self.assertEqual(value.product_response_sla, 17)
+        self.assertEqual(value.max_scenario_seconds, 181)
 
 
 class SelectorTests(unittest.TestCase):
@@ -92,6 +109,244 @@ class FakeMessages(list):
 
 
 class E2EClientTests(unittest.IsolatedAsyncioTestCase):
+    async def test_product_clock_starts_after_outbound_send_completes(self) -> None:
+        raw = AsyncMock()
+        events = []
+
+        async def send_message(*args, **kwargs):
+            events.append("send_completed")
+            return Mock(id=11)
+
+        raw.send_message.side_effect = send_message
+        wrapper = TelegramE2EClient(config(), raw); wrapper.target = Mock(id=99)
+        wrapper.baseline = AsyncMock(return_value=10)
+        expected = Mock()
+        wrapper.collect = AsyncMock(return_value=expected)
+        clock = Mock()
+        clock_values = iter((100.0, 100.1, 120.1))
+
+        def monotonic() -> float:
+            value = next(clock_values)
+            events.append(f"clock:{value}")
+            return value
+
+        clock.monotonic.side_effect = monotonic
+        with patch("qa_e2e.client.time", clock):
+            result = await wrapper.send("/start", scenario_started_at=80.0, readiness_completed_at=80.0)
+        self.assertIs(result, expected)
+        raw.send_message.assert_awaited_once_with(wrapper.target, "/start")
+        collect_call = wrapper.collect.await_args
+        self.assertEqual(collect_call.args[:3], (10, "/start", 120.1))
+        self.assertEqual(collect_call.kwargs["send_started_at"], 100.1)
+        self.assertEqual(collect_call.kwargs["scenario_started_at"], 80.0)
+        self.assertEqual(collect_call.kwargs["readiness_completed_at"], 80.0)
+        self.assertEqual(events, ["clock:100.0", "clock:100.1", "send_completed", "clock:120.1"])
+
+    async def test_outgoing_and_stale_messages_never_become_response_latency(self) -> None:
+        raw = AsyncMock()
+        wrapper = TelegramE2EClient(config(), raw); wrapper.target = Mock(id=99)
+        stale = Mock(id=9, out=False, sender_id=99, message="stale", media=None, date=None, edit_date=None, buttons=None, reply_markup=None)
+        outgoing = Mock(id=11, out=True, sender_id=1, message="/start", media=None, date=None, edit_date=None, buttons=None, reply_markup=None)
+        fresh = Mock(id=12, out=False, sender_id=99, message="fresh", media=None, date=None, edit_date=None, buttons=None, reply_markup=None)
+        foreign = Mock(id=13, out=False, sender_id=77, message="foreign", media=None, date=None, edit_date=None, buttons=None, reply_markup=None)
+        raw.get_messages.return_value = [foreign, fresh, outgoing, stale]
+        with patch("qa_e2e.client.asyncio.sleep", AsyncMock()):
+            result = await wrapper.collect(10, "/start", time.monotonic(), timeout=0.02)
+        self.assertEqual([item.message_id for item in result.messages], [12])
+        self.assertEqual(result.outgoing_message_ids, (11,))
+
+    async def test_late_qualifying_response_is_observed_for_sla_classification(self) -> None:
+        raw = AsyncMock()
+        wrapper = TelegramE2EClient(config(), raw); wrapper.target = Mock(id=99)
+        button = tl_types.KeyboardButton("📈 Курси")
+        message = Mock(id=12, out=False, sender_id=99, message="active", media=None, date=None,
+                       edit_date=None, buttons=[[button]],
+                       reply_markup=tl_types.ReplyKeyboardMarkup([tl_types.KeyboardButtonRow([button])]))
+        raw.get_messages.return_value = [message]
+        clock = Mock()
+        clock.monotonic.side_effect = (100.0, 120.0, 120.0, 120.1,
+                                       121.2, 121.2, 121.3, 121.4)
+        with patch("qa_e2e.client.time", clock):
+            result = await wrapper.collect(10, "/start", 100.0, timeout=23,
+                                           scenario_started_at=80.0, readiness_completed_at=80.0)
+        self.assertAlmostEqual(result.messages[0].response_seconds, 20.1)
+        self.assertEqual(result.messages[0].reply_buttons, ("📈 Курси",))
+        self.assertAlmostEqual(result.timing.first_response_at, 120.1)
+        self.assertAlmostEqual(result.timing.collection_deadline_at, 123.0)
+
+    async def test_in_flight_history_poll_cannot_overrun_collection_deadline(self) -> None:
+        async def never_returns(*args, **kwargs):
+            await asyncio.Event().wait()
+
+        raw = AsyncMock()
+        raw.get_messages.side_effect = never_returns
+        wrapper = TelegramE2EClient(config(), raw); wrapper.target = Mock(id=99)
+        started = time.monotonic()
+        result = await wrapper.collect(10, "/start", started, timeout=0.01)
+        self.assertFalse(result.messages)
+        self.assertLess(time.monotonic() - started, 0.5)
+
+    async def test_markup_only_edit_remains_available_as_qualifying_evidence(self) -> None:
+        raw = AsyncMock()
+        wrapper = TelegramE2EClient(config(), raw); wrapper.target = Mock(id=99)
+        plain = Mock(id=11, out=False, sender_id=99, message="active", media=None, date=None,
+                     edit_date=None, buttons=None, reply_markup=None)
+        button = tl_types.KeyboardButton("📈 Курси")
+        edited = Mock(
+            id=11, out=False, sender_id=99, message="active", media=None, date=None,
+            edit_date=datetime.now(timezone.utc), buttons=[[button]],
+            reply_markup=tl_types.ReplyKeyboardMarkup([tl_types.KeyboardButtonRow([button])]),
+        )
+        calls = 0
+
+        def messages(*args, **kwargs):
+            nonlocal calls
+            calls += 1
+            return [plain] if calls == 1 else [edited]
+
+        raw.get_messages.side_effect = messages
+        with patch("qa_e2e.client.asyncio.sleep", AsyncMock()):
+            result = await wrapper.collect(10, "/start", time.monotonic(), timeout=0.02)
+        qualifying = _first_qualifying_reply_keyboard(result, ("📈 Курси",))
+        self.assertIsNotNone(qualifying)
+        self.assertTrue(qualifying.edited)
+
+    async def test_smoke_settle_gate_waits_past_plain_response_for_qualifying_keyboard(self) -> None:
+        raw = AsyncMock()
+        wrapper = TelegramE2EClient(config(), raw); wrapper.target = Mock(id=99)
+        plain = Mock(id=11, out=False, sender_id=99, message="loading", media=None, date=None,
+                     edit_date=None, buttons=None, reply_markup=None)
+        button = tl_types.KeyboardButton("📈 Курси")
+        qualifying = Mock(
+            id=12, out=False, sender_id=99, message="active", media=None, date=None,
+            edit_date=None, buttons=[[button]],
+            reply_markup=tl_types.ReplyKeyboardMarkup([tl_types.KeyboardButtonRow([button])]),
+        )
+        calls = 0
+
+        def messages(*args, **kwargs):
+            nonlocal calls
+            calls += 1
+            return [plain] if calls < 3 else [qualifying, plain]
+
+        raw.get_messages.side_effect = messages
+        clock = Mock()
+        clock.monotonic.side_effect = (
+            100.0,
+            100.1, 100.1, 100.2,
+            101.4, 101.4, 101.5,
+            102.0, 102.0, 102.1,
+            103.2, 103.2, 103.3,
+            103.4,
+        )
+        expected = {"📈 курси"}
+        settle_when = lambda evidence: any(
+            {label.casefold() for label in item.reply_buttons} & expected for item in evidence
+        )
+        with patch("qa_e2e.client.time", clock), patch("qa_e2e.client.asyncio.sleep", AsyncMock()):
+            result = await wrapper.collect(10, "/start", 100.0, timeout=5, settle_when=settle_when)
+        keyboard = _first_qualifying_reply_keyboard(result, ("📈 Курси",))
+        self.assertIsNotNone(keyboard)
+        self.assertAlmostEqual(keyboard.response_seconds, 2.1)
+        self.assertGreaterEqual(calls, 4)
+
+    async def test_setup_duration_and_collection_window_do_not_become_product_latency(self) -> None:
+        timing = ActionTiming(100.0, 100.0, 120.0, 120.1, 120.2, 120.7, 122.7,
+                              collection_deadline_at=143.2)
+        message = MessageEvidence(2, None, "ok", None, (), ("📈 Курси",), 0.5)
+        result = ActionResult("/start", 1, (message,), 0.5, 22.7, timing)
+        rendered = _timing_evidence(result, message.response_seconds, 20, 180)
+        for checkpoint in ("scenario_started_at", "readiness_completed_at", "boundary_captured_at",
+                           "send_started_at", "product_action_sent_at", "first_response_at",
+                           "qualifying_response_at", "product_latency", "product_deadline_at",
+                           "collection_deadline_at", "scenario_deadline_at", "overall_duration"):
+            self.assertIn(checkpoint, rendered)
+        self.assertIn("product_latency=+0.500s", rendered)
+        self.assertIn("overall_duration=22.700s", rendered)
+
+    async def test_smoke_uses_qualifying_response_latency_against_true_sla(self) -> None:
+        for latency, expected in ((0.5, True), (20.0, True), (20.1, False)):
+            client = Mock()
+            finished = 122.0 + latency
+            timing = ActionTiming(100.0, 100.0, 120.0, 120.0, 120.0,
+                                  120.0 + latency, finished, collection_deadline_at=143.0)
+            message = MessageEvidence(2, None, "active", None, (), ("📈 Курси",), latency)
+            client.send = AsyncMock(return_value=ActionResult("/start", 1, (message,), latency, finished - 100.0, timing))
+            scenario = next(item for item in build_scenarios(client, config()) if item.id == "e2e.smoke.start")
+            outcome = await scenario.check()
+            self.assertEqual(outcome.passed, expected)
+            self.assertEqual(outcome.failed_predicate, None if expected else "response_within_product_sla")
+            self.assertEqual(outcome.failure_category, None if expected else FailureCategory.PRODUCT_RESPONSE_TIMEOUT)
+
+    async def test_plain_response_and_message_order_do_not_replace_first_qualifying_latency(self) -> None:
+        stale_keyboard = MessageEvidence(19, None, "stale", None, (), ("📈 Курси",), 0.01)
+        plain = MessageEvidence(20, None, "loading", None, (), (), 0.1)
+        later_id_early_keyboard = MessageEvidence(22, None, "ready", None, (), ("📈 Курси",), 0.4)
+        earlier_id_late_keyboard = MessageEvidence(21, None, "edited", None, (), ("📈 Курси",), 0.8, True)
+        result = ActionResult("/start", 19, (stale_keyboard, plain, earlier_id_late_keyboard, later_id_early_keyboard), 0.1, 2.0)
+        self.assertIs(_first_qualifying_reply_keyboard(result, ("📈 Курси",)), later_id_early_keyboard)
+
+    async def test_smoke_times_first_qualifier_but_validates_newest_keyboard_owner(self) -> None:
+        first = MessageEvidence(20, None, "starting", None, (), ("📈 Курси",), 0.4)
+        latest = MessageEvidence(21, None, "Ваш сеанс активний", None, (),
+                                 ("📈 Курси", "⚙ Налаштування"), 0.8)
+        timing = ActionTiming(100.0, 100.0, 100.1, 100.2, 100.3, 100.7, 102.3,
+                              collection_deadline_at=123.3)
+        client = Mock()
+        client.send = AsyncMock(return_value=ActionResult("/start", 19, (first, latest), 0.4, 2.3, timing))
+        scenario = next(item for item in build_scenarios(client, config()) if item.id == "e2e.smoke.start")
+        outcome = await scenario.check()
+        self.assertTrue(outcome.passed)
+        self.assertIn("first_qualifying_id=20", outcome.actual)
+        self.assertIn("reply=('📈 Курси', '⚙ Налаштування')", outcome.actual)
+        self.assertIn("qualifying_latency=0.4", outcome.actual)
+
+    async def test_recovery_then_start_uses_fresh_scenario_and_product_clock(self) -> None:
+        def action_result(action: str, baseline: int, message: MessageEvidence) -> ActionResult:
+            return ActionResult(action, baseline, (message,), message.response_seconds, 1.0)
+
+        recovery_results = (
+            action_result("/restart", 1, MessageEvidence(2, None, "restarted", None, (), (), 0.2)),
+            action_result("/stop", 3, MessageEvidence(4, None, "stopped", None, (), (), 0.2)),
+            action_result("/start", 5, MessageEvidence(6, None, "active", None, (), ("📈 Курси",), 0.2)),
+        )
+        smoke_message = MessageEvidence(8, None, "Ваш сеанс активний", None, (), ("📈 Курси",), 0.5)
+        smoke_timing = ActionTiming(500.0, 500.0, 520.0, 520.1, 520.2, 520.7, 522.7,
+                                    collection_deadline_at=543.2)
+        smoke_result = ActionResult("/start", 7, (smoke_message,), 0.5, 22.7, smoke_timing)
+        client = Mock()
+        client.send = AsyncMock(side_effect=(*recovery_results, smoke_result))
+        scenarios = build_scenarios(client, config())
+        recovery = next(item for item in scenarios if item.id == "e2e.smoke.sessions")
+        smoke = next(item for item in scenarios if item.id == "e2e.smoke.start")
+        clock = Mock()
+        clock.monotonic.return_value = 500.0
+        with patch("qa_e2e.scenarios.flows.time", clock):
+            report = await ScenarioRunner((smoke, recovery), max_parallel=1,
+                                          real_provider_checks=True).run("smoke")
+        self.assertEqual([item.scenario_id for item in report.results],
+                         ["e2e.smoke.sessions", "e2e.smoke.start"])
+        self.assertTrue(all(item.status is Status.PASSED for item in report.results))
+        self.assertEqual([item.args[0] for item in client.send.await_args_list],
+                         ["/restart", "/stop", "/start", "/start"])
+        measured_call = client.send.await_args_list[-1]
+        self.assertEqual(measured_call.kwargs["scenario_started_at"], 500.0)
+        self.assertEqual(measured_call.kwargs["readiness_completed_at"], 500.0)
+        self.assertEqual(measured_call.kwargs["timeout"], 22)
+        self.assertIn("product_latency=+0.500s", report.results[-1].actual)
+
+    async def test_readiness_timeout_still_disconnects_client(self) -> None:
+        async def never_ready() -> None:
+            await asyncio.sleep(1)
+
+        client = Mock()
+        client.connect = AsyncMock(side_effect=never_ready)
+        client.disconnect = AsyncMock()
+        runner = E2ERunner(replace(config(), readiness_timeout=0.01), client)
+        with self.assertRaises(asyncio.TimeoutError):
+            await runner.run("smoke")
+        client.disconnect.assert_awaited_once()
+
     async def test_feature_suite_setup_always_starts_before_resolving_menu_action(self) -> None:
         for candidates in (
             ("🤖 AI Консультант", "🤖 AI Consultant"),

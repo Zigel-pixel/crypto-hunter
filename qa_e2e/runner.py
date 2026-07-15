@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import replace
 import platform
 
@@ -17,8 +18,8 @@ class E2ERunner:
         self.runner = ScenarioRunner(build_scenarios(self.client, config), timeout=config.max_scenario_seconds, max_parallel=1, real_provider_checks=True)
 
     async def run(self, suite: str) -> RunReport:
-        await self.client.connect()
         try:
+            await asyncio.wait_for(self.client.connect(), timeout=self.config.readiness_timeout)
             report = await self.runner.run(suite)
             try:
                 import telethon

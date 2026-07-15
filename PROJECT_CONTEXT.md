@@ -565,6 +565,26 @@ python -m qa_e2e run all
   exists in the repository, the default remains a localized, non-blocking
   original-text fallback; URLs, dates, sources, and missing summaries are never
   invented or translated.
+
+## Telegram product-SLA timing boundary (2026-07-15)
+
+- E2E previously captured its action clock immediately before awaiting
+  Telethon `send_message`, so outbound RPC time was included. It also allowed a
+  `get_messages` RPC started before the deadline to return after it and stamped
+  the whole batch at that late observation time. That formula explains how a
+  valid `/start` could be recorded at about 22.2 seconds; the old evidence
+  cannot prove how the delay split between the send and history RPCs.
+- The fresh message boundary is now captured immediately before send, while
+  `product_action_sent_at` is captured only after send completes. Incoming bot
+  evidence and its deadline use that timestamp. Outgoing user messages and
+  unexpected senders are excluded from response evidence.
+- Smoke evaluates the first fresh qualifying reply-keyboard response against
+  the unchanged 20-second SLA, while a small bounded diagnostic observation
+  margin lets a genuinely late valid response retain its correct timeout
+  classification. Reports expose monotonic offsets for scenario, readiness,
+  boundary, action sent, first incoming/qualifying response, product latency,
+  collection/product/scenario deadlines, and overall duration. Readiness and
+  product-response limits are separately configurable.
 - One-shot QA notifications use only the existing admin token/ID environment configuration and bounded retries. Notification failure is non-fatal and no second QA polling process starts. Read-only commands are `/deploy_status`, `/deploy_last`, `/deploy_reports`, and `/deploy_failed_commit`; no deploy/shell/rollback Telegram command exists.
 - Runtime state, reports, logs, candidate data, virtual environments, and locks are ignored. `requirements-dev.txt` explicitly provides pytest for unattended candidate verification.
 

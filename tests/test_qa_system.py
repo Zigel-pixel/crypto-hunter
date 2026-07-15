@@ -128,6 +128,22 @@ class ScenarioRunnerTests(unittest.IsolatedAsyncioTestCase):
 
 
 class ReportingTests(unittest.TestCase):
+    def test_passing_timing_diagnostics_are_visible_and_table_safe(self) -> None:
+        now = datetime.now(timezone.utc)
+        checkpoints = (
+            "scenario_started_at", "readiness_completed_at", "product_action_sent_at",
+            "first_response_at", "product_latency", "overall_duration",
+        )
+        actual = "; ".join(f"{item}=+0.500s" for item in checkpoints) + " | detail\nnext"
+        result = ScenarioResult("timing", "Timing", "smoke", now, now, 0.5, Status.PASSED,
+                                Severity.CRITICAL, "within SLA", actual)
+        report = RunReport("smoke", now, now, "feat/market-core", "abc123", "test", (result,))
+        rendered = markdown_report(report)
+        self.assertIn("Actual/diagnostics", rendered)
+        for checkpoint in checkpoints:
+            self.assertIn(checkpoint, rendered)
+        self.assertIn("\\| detail<br>next", rendered)
+
     def test_failure_category_and_predicate_are_reported(self) -> None:
         now = datetime.now(timezone.utc)
         result = ScenarioResult("x", "x", "smoke", now, now, 0, Status.FAILED, Severity.HIGH,

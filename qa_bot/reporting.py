@@ -20,8 +20,8 @@ def markdown_report(report: RunReport) -> str:
     duration = (report.finished_at - report.started_at).total_seconds()
     lines = ["# Crypto Hunter QA Report", "", f"- Branch: {report.branch}", f"- Commit: {report.commit}", f"- Run type: {report.run_type}", f"- Environment: {redact(report.environment)}", f"- Started: {report.started_at.isoformat()}", f"- Finished: {report.finished_at.isoformat()}", f"- Duration: {duration:.2f}s", "", "## Summary", "", "| Status | Count |", "| --- | ---: |"]
     lines.extend(f"| {status.value} | {report.count(status)} |" for status in Status)
-    lines.extend(["", "## Scenarios", "", "| Scenario | Suite | Status | Severity | Duration |", "| --- | --- | --- | --- | ---: |"])
-    lines.extend(f"| {redact(item.title)} | {item.suite} | {item.status.value} | {item.severity.value} | {item.duration:.2f}s |" for item in report.results)
+    lines.extend(["", "## Scenarios", "", "| Scenario | Suite | Status | Severity | Duration | Actual/diagnostics |", "| --- | --- | --- | --- | ---: | --- |"])
+    lines.extend(f"| {_markdown_cell(item.title)} | {item.suite} | {item.status.value} | {item.severity.value} | {item.duration:.2f}s | {_markdown_cell(item.actual)} |" for item in report.results)
     failures = [item for item in report.results if item.status in {Status.FAILED, Status.ERROR}]
     if failures:
         lines.extend(["", "## Detailed failures", ""])
@@ -58,6 +58,10 @@ def codex_prompt(report: RunReport) -> str:
 
 def _json_default(value: object) -> str:
     return value.isoformat() if isinstance(value, datetime) else str(value)
+
+
+def _markdown_cell(value: object) -> str:
+    return redact(str(value)).replace("|", "\\|").replace("\r\n", "<br>").replace("\r", "<br>").replace("\n", "<br>")
 
 
 def _sanitize(value):

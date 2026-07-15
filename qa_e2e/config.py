@@ -68,6 +68,8 @@ class E2EConfig:
     allow_destructive: bool = False
     test_language: str = "uk"
     live_wait_seconds: int = 50
+    readiness_timeout: int = 30
+    product_response_sla: int = 20
 
 
 def load_e2e_config(*, load_env_file: bool = True, require_enabled: bool = True) -> E2EConfig:
@@ -92,4 +94,5 @@ def load_e2e_config(*, load_env_file: bool = True, require_enabled: bool = True)
         _int("E2E_DEFAULT_TIMEOUT_SECONDS", 20), _int("E2E_LONG_TIMEOUT_SECONDS", 90),
         _int("E2E_MESSAGE_SETTLE_SECONDS", 2), _int("E2E_MAX_SCENARIO_SECONDS", 180),
         _bool("E2E_ALLOW_DESTRUCTIVE_SCENARIOS"), language, _int("E2E_LIVE_WAIT_SECONDS", 50),
+        _int("E2E_READINESS_TIMEOUT_SECONDS", 30), _int("E2E_PRODUCT_RESPONSE_SLA_SECONDS", 20),
     )

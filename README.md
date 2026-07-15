@@ -32,6 +32,16 @@ one path-scoped bot tree, and verify health before re-enabling Auto Deploy.
 Never enable Auto Deploy merely because files were copied; first complete one
 supervised deployment with smoke and full E2E green.
 
+Telegram product-response timing is measured only after the outbound action has
+completed. E2E records scenario start, readiness completion, cursor-boundary
+capture, send start, `product_action_sent_at`, first incoming response, and
+collection finish as monotonic checkpoints. The `/start` product SLA remains 20
+seconds and uses the first fresh qualifying bot reply; setup, outbound send,
+history hydration, outgoing user messages, and the settle window are excluded.
+Collection has a small bounded diagnostic margin beyond the SLA so a genuinely
+late valid reply is still reported as a product timeout with its measured
+latency, rather than being misclassified as a missing keyboard.
+
 ## Ethereum and Tron wallets
 
 Wallet monitoring is read-only: the bot accepts public addresses only and

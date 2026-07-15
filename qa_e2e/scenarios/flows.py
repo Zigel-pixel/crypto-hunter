@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+import time
 from collections.abc import Awaitable, Callable
 
 from qa_bot.models import CheckResult, FailureCategory, NamedAssertion, Scenario, Severity
@@ -11,6 +12,7 @@ from qa_e2e.evidence import contains_raw_error
 
 PUBLIC_EVM_TEST_ADDRESS = "0x000000000000000000000000000000000000dEaD"
 PUBLIC_TRON_TEST_ADDRESS = "TXLAQ63Xg1NAzckPwKHvzw7CSEmLMEqcdj"
+SMOKE_OBSERVATION_POLL_MARGIN_SECONDS = 1
 
 
 def _latest(result):
@@ -20,10 +22,26 @@ def _latest(result):
 def _latest_reply_keyboard(result, expected_actions: tuple[str, ...]):
     expected = {item.casefold() for item in expected_actions}
     for message in reversed(result.messages):
+        if message.message_id <= result.baseline_id:
+            continue
         labels = {item.casefold() for item in message.reply_buttons}
         if labels & expected:
             return message
     return None
+
+
+def _first_qualifying_reply_keyboard(result, expected_actions: tuple[str, ...]):
+    expected = {item.casefold() for item in expected_actions}
+    matches = [message for message in result.messages
+               if message.message_id > result.baseline_id
+               and {item.casefold() for item in message.reply_buttons} & expected]
+    return min(matches, key=lambda item: item.response_seconds, default=None)
+
+
+def _contains_expected_reply_keyboard(messages, expected_actions: tuple[str, ...]) -> bool:
+    expected = {item.casefold() for item in expected_actions}
+    return any({item.casefold() for item in message.reply_buttons} & expected
+               for message in messages)
 
 
 async def _start_and_open(client: TelegramE2EClient, candidates: tuple[str, ...]):
@@ -40,19 +58,38 @@ def _scenario(client: TelegramE2EClient, config: E2EConfig, scenario_id: str, ti
 
 def build_scenarios(client: TelegramE2EClient, config: E2EConfig) -> tuple[Scenario, ...]:
     async def smoke_start():
-        result = await client.send("/start")
-        latest = _latest_reply_keyboard(result, ("📈 Rates", "📈 Курси"))
+        scenario_started_at = time.monotonic()
+        expected_actions = ("📈 Rates", "📈 Курси")
+        observation_timeout = min(
+            config.max_scenario_seconds,
+            config.product_response_sla + config.settle_seconds + SMOKE_OBSERVATION_POLL_MARGIN_SECONDS,
+        )
+        result = await client.send(
+            "/start", timeout=observation_timeout,
+            scenario_started_at=scenario_started_at,
+            readiness_completed_at=scenario_started_at,
+            settle_when=lambda messages: _contains_expected_reply_keyboard(messages, expected_actions),
+        )
+        latest = _latest_reply_keyboard(result, expected_actions)
+        first_qualifying = _first_qualifying_reply_keyboard(result, expected_actions)
+        qualifying_latency = first_qualifying.response_seconds if first_qualifying is not None else None
         assertions = (
             NamedAssertion("bot_response_received", bool(result.messages), f"messages={len(result.messages)}"),
+            NamedAssertion("response_is_fresh", bool(latest and latest.message_id > result.baseline_id), f"baseline={result.baseline_id}"),
+            NamedAssertion("response_from_expected_target", first_qualifying is not None, "filtered by target conversation and sender"),
             NamedAssertion("reply_markup_type_is_reply_keyboard", latest is not None),
             NamedAssertion("reply_keyboard_non_empty", bool(latest and latest.reply_buttons)),
             NamedAssertion("known_safe_main_action_present", bool(latest and set(latest.reply_buttons) & {"📈 Rates", "📈 Курси"})),
             NamedAssertion("no_inline_cross_classification", bool(latest is not None and not latest.inline_buttons)),
             NamedAssertion("no_raw_error_leakage", bool(latest is not None and not contains_raw_error(latest.text))),
-            NamedAssertion("response_within_product_sla", (result.first_response_seconds or 999) <= config.default_timeout, f"first={result.first_response_seconds}"),
+            NamedAssertion("response_within_product_sla", qualifying_latency is not None and qualifying_latency <= config.product_response_sla,
+                           f"qualifying={qualifying_latency}; sla={config.product_response_sla}"),
         )
         failed = next((item.name for item in assertions if not item.passed), None)
-        actual = f"messages={len(result.messages)}, first={result.first_response_seconds}, reply={latest.reply_buttons if latest else ()}, inline={latest.inline_buttons if latest else ()}"
+        actual = (f"messages={len(result.messages)}, first_qualifying_id="
+                  f"{first_qualifying.message_id if first_qualifying else None}, qualifying_latency={qualifying_latency}, "
+                  f"reply={latest.reply_buttons if latest else ()}, inline={latest.inline_buttons if latest else ()}; "
+                  f"{_timing_evidence(result, qualifying_latency, config.product_response_sla, config.max_scenario_seconds)}")
         category = FailureCategory.PRODUCT_RESPONSE_TIMEOUT if failed == "response_within_product_sla" else FailureCategory.PRODUCT_ASSERTION_FAILED
         return CheckResult(failed is None, actual, _evidence(result), category if failed else None, failed, assertions)
 
@@ -63,6 +100,8 @@ def build_scenarios(client: TelegramE2EClient, config: E2EConfig) -> tuple[Scena
             parts.append(f"{command}:{len(result.messages)}")
             if not result.messages or any(contains_raw_error(item.text) for item in result.messages):
                 return False, ", ".join(parts), _evidence(result)
+            if command == "/start" and _latest_reply_keyboard(result, ("📈 Rates", "📈 Курси")) is None:
+                return False, ", ".join(parts), "Recovery readiness probe did not restore the safe main keyboard"
         return True, ", ".join(parts), "Session commands responded without technical errors"
 
     async def localization():
@@ -178,6 +217,38 @@ def build_scenarios(client: TelegramE2EClient, config: E2EConfig) -> tuple[Scena
 
 def _evidence(result) -> str:
     return " | ".join(f"id={item.message_id}; media={item.media_type or 'text'}; text={item.text[:200]}; inline={item.inline_buttons}; reply={item.reply_buttons}; t={item.response_seconds:.2f}s" for item in result.messages[:10]) or "No target-bot response"
+
+
+def _timing_evidence(result, qualifying_latency: float | None = None,
+                     product_sla: float | None = None, overall_timeout: float | None = None) -> str:
+    timing = result.timing
+    if timing is None:
+        return "timing=unavailable"
+    qualifying_offset = (timing.offset(timing.product_action_sent_at) + qualifying_latency
+                         if qualifying_latency is not None else None)
+    action_offset = timing.offset(timing.product_action_sent_at)
+    product_deadline_offset = (action_offset + product_sla
+                               if product_sla is not None else None)
+    return "; ".join((
+        "scenario_started_at=+0.000s",
+        f"readiness_completed_at=+{timing.offset(timing.readiness_completed_at):.3f}s",
+        f"boundary_captured_at=+{timing.offset(timing.boundary_captured_at):.3f}s",
+        f"send_started_at=+{timing.offset(timing.send_started_at):.3f}s",
+        f"product_action_sent_at=+{timing.offset(timing.product_action_sent_at):.3f}s",
+        f"first_response_at={_offset(timing.offset(timing.first_response_at))}",
+        f"qualifying_response_at={_offset(qualifying_offset)}",
+        f"product_latency={_offset(qualifying_latency)}",
+        f"product_deadline_at={_offset(product_deadline_offset)}",
+        f"collection_deadline_at={_offset(timing.offset(timing.collection_deadline_at))}",
+        f"scenario_deadline_at={_offset(overall_timeout)}",
+        f"product_sla={product_sla if product_sla is not None else 'unknown'}s",
+        f"overall_scenario_timeout={overall_timeout if overall_timeout is not None else 'unknown'}s",
+        f"overall_duration={result.total_seconds:.3f}s",
+    ))
+
+
+def _offset(value: float | None) -> str:
+    return "none" if value is None else f"+{value:.3f}s"
 
 
 def _parse_balance(value: str) -> float | None:
