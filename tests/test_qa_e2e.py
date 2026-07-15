@@ -8,13 +8,16 @@ import tempfile
 import time
 import unittest
 from unittest.mock import AsyncMock, Mock, patch
+from telethon.tl import types as tl_types
 
 from qa_bot.models import RunReport, ScenarioResult, Severity, Status
 from qa_e2e.auth import authorize
 from qa_e2e.client import TargetNotBot, TelegramE2EClient
 from qa_e2e.config import E2EConfig, E2EConfigError, load_e2e_config
 from qa_e2e.evidence import sanitize_text
-from qa_e2e.selectors import UnsafeButtonError, find_inline_button, select_reply_label
+from qa_e2e.models import ActionResult, MessageEvidence
+from qa_e2e.selectors import UnsafeButtonError, button_labels, find_inline_button, reply_keyboard_labels, select_reply_label
+from qa_e2e.scenarios.flows import _latest_reply_keyboard
 from qa_e2e.storage import ARTIFACT_RE, E2EStorage, REPORT_RE
 
 
@@ -54,16 +57,34 @@ class E2EConfigTests(unittest.TestCase):
 
 class SelectorTests(unittest.TestCase):
     def test_inline_selector_and_forbidden_controls(self) -> None:
-        safe = Mock(text="Refresh", data=b"rates:live:refresh", url=None, login_url=None, webview=None, web_app=None, buy=False, payment=False)
-        message = Mock(buttons=[[safe]])
+        safe = tl_types.KeyboardButtonCallback("Refresh", b"rates:live:refresh")
+        markup = tl_types.ReplyInlineMarkup([tl_types.KeyboardButtonRow([safe])])
+        message = Mock(buttons=[[safe]], reply_markup=markup)
         self.assertIs(find_inline_button(message, callback_prefix="rates:live:"), safe)
-        unsafe = Mock(text="Pay", data=b"pay", url="https://example.com", login_url=None, webview=None, web_app=None, buy=False, payment=False)
-        with self.assertRaises(UnsafeButtonError): find_inline_button(Mock(buttons=[[unsafe]]), text="Pay")
+        unsafe = tl_types.KeyboardButtonUrl("Pay", "https://example.com")
+        unsafe_markup = tl_types.ReplyInlineMarkup([tl_types.KeyboardButtonRow([unsafe])])
+        with self.assertRaises(UnsafeButtonError): find_inline_button(Mock(buttons=[[unsafe]], reply_markup=unsafe_markup), text="Pay")
 
     def test_reply_selector_normalizes(self) -> None:
-        button = Mock(text="  📈 Rates ")
-        message = Mock(reply_markup=Mock(rows=[Mock(buttons=[button])]))
+        button = tl_types.KeyboardButton("  📈 Rates ")
+        message = Mock(reply_markup=tl_types.ReplyKeyboardMarkup([tl_types.KeyboardButtonRow([button])]))
         self.assertEqual(select_reply_label(message, ("📈 rates",)), "  📈 Rates ")
+
+    def test_markup_types_never_cross_classify_same_text(self) -> None:
+        reply_button = tl_types.KeyboardButton("Same")
+        reply = Mock(reply_markup=tl_types.ReplyKeyboardMarkup([tl_types.KeyboardButtonRow([reply_button])]), buttons=[[reply_button]])
+        inline_button = tl_types.KeyboardButtonCallback("Same", b"safe:action")
+        inline = Mock(reply_markup=tl_types.ReplyInlineMarkup([tl_types.KeyboardButtonRow([inline_button])]), buttons=[[inline_button]])
+        self.assertEqual(reply_keyboard_labels(reply), ("Same",))
+        self.assertEqual(button_labels(reply), ())
+        self.assertEqual(reply_keyboard_labels(inline), ())
+        self.assertEqual(button_labels(inline), ("Same",))
+
+    def test_hide_and_force_reply_have_no_buttons(self) -> None:
+        for markup in (tl_types.ReplyKeyboardHide(), tl_types.ReplyKeyboardForceReply()):
+            message = Mock(reply_markup=markup, buttons=None)
+            self.assertEqual(reply_keyboard_labels(message), ())
+            self.assertEqual(button_labels(message), ())
 
 
 class FakeMessages(list):
@@ -73,9 +94,11 @@ class FakeMessages(list):
 class E2EClientTests(unittest.IsolatedAsyncioTestCase):
     async def test_recent_actions_skip_newer_non_owning_messages(self) -> None:
         wrapper = TelegramE2EClient(config(), AsyncMock()); wrapper.target = Mock()
-        inline = Mock(buttons=[[Mock(text="Live", data=b"rates:live:start", url=None, login_url=None, webview=None, web_app=None, buy=False, payment=False)]])
+        inline_button = tl_types.KeyboardButtonCallback("Live", b"rates:live:start")
+        inline = Mock(buttons=[[inline_button]], reply_markup=tl_types.ReplyInlineMarkup([tl_types.KeyboardButtonRow([inline_button])]))
         no_buttons = Mock(buttons=None, reply_markup=None)
-        reply = Mock(reply_markup=Mock(rows=[Mock(buttons=[Mock(text="🌐 Мова")])]), buttons=None)
+        reply_button = tl_types.KeyboardButton("🌐 Мова")
+        reply = Mock(reply_markup=tl_types.ReplyKeyboardMarkup([tl_types.KeyboardButtonRow([reply_button])]), buttons=None)
         wrapper.last_raw_messages = (inline, reply, no_buttons)
         wrapper.click_inline = AsyncMock(return_value="clicked")
         wrapper.send = AsyncMock(return_value="sent")
@@ -83,6 +106,13 @@ class E2EClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertIs(wrapper.click_inline.await_args.args[0], inline)
         self.assertEqual(await wrapper.send_recent_reply_action(("🌐 Мова", "🌐 Language")), "sent")
         wrapper.send.assert_awaited_once_with("🌐 Мова", timeout=None)
+
+    async def test_ukrainian_start_uses_newest_fresh_reply_keyboard(self) -> None:
+        stale = MessageEvidence(1, None, "old", None, (), ("📈 Rates",), 0.1)
+        inline = MessageEvidence(2, None, "inline", None, ("📈 Курси",), (), 0.2)
+        current = MessageEvidence(3, None, "Ваш сеанс активний", None, (), ("📈 Курси", "⚙ Налаштування"), 0.3)
+        result = ActionResult("/start", 1, (stale, inline, current), 0.1, 0.4)
+        self.assertIs(_latest_reply_keyboard(result, ("📈 Rates", "📈 Курси")), current)
 
     async def test_target_must_be_bot(self) -> None:
         raw = AsyncMock()

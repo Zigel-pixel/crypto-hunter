@@ -17,6 +17,15 @@ def _latest(result):
     return result.messages[-1] if result.messages else None
 
 
+def _latest_reply_keyboard(result, expected_actions: tuple[str, ...]):
+    expected = {item.casefold() for item in expected_actions}
+    for message in reversed(result.messages):
+        labels = {item.casefold() for item in message.reply_buttons}
+        if labels & expected:
+            return message
+    return None
+
+
 def _scenario(client: TelegramE2EClient, config: E2EConfig, scenario_id: str, title: str, suite: str, expected: str, action: Callable[[], Awaitable[tuple[bool, str, str]]], *, severity: Severity = Severity.HIGH) -> Scenario:
     return Scenario(scenario_id, title, suite, "Real Telegram interaction with the configured target bot.", expected, action, severity, timeout=config.max_scenario_seconds, tags=("telegram-e2e",), related_modules=("app/handlers", "app/keyboards"), reproduction_steps=(f"Run python -m qa_e2e run {suite}", f"Observe scenario {scenario_id}"))
 
@@ -24,9 +33,11 @@ def _scenario(client: TelegramE2EClient, config: E2EConfig, scenario_id: str, ti
 def build_scenarios(client: TelegramE2EClient, config: E2EConfig) -> tuple[Scenario, ...]:
     async def smoke_start():
         result = await client.send("/start")
-        latest = _latest(result)
-        ok = latest is not None and bool(latest.reply_buttons) and not contains_raw_error(latest.text) and (result.first_response_seconds or 999) <= config.default_timeout
-        return ok, f"messages={len(result.messages)}, first={result.first_response_seconds}, keyboard={latest.reply_buttons if latest else ()}", _evidence(result)
+        latest = _latest_reply_keyboard(result, ("📈 Rates", "📈 Курси"))
+        ok = (latest is not None and bool(latest.reply_buttons) and not latest.inline_buttons
+              and not contains_raw_error(latest.text)
+              and (result.first_response_seconds or 999) <= config.default_timeout)
+        return ok, f"messages={len(result.messages)}, first={result.first_response_seconds}, reply={latest.reply_buttons if latest else ()}, inline={latest.inline_buttons if latest else ()}", _evidence(result)
 
     async def smoke_sessions():
         parts = []

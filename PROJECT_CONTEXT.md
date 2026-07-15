@@ -484,6 +484,18 @@ E2E coverage remained for the follow-up completion commit below.
   Ukrainian main keyboard, works idempotently for already-Ukrainian users, and
   `/start` verifies persistence in the E2E scenario.
 
+## Telegram keyboard evidence classification (2026-07-15)
+
+- Telethon exposes convenience `message.buttons` for both reply and inline
+  keyboards. E2E evidence previously treated every such collection as inline,
+  so a correct Ukrainian `/start` reply keyboard appeared in both categories.
+- Extraction now classifies the owning `reply_markup` first:
+  `ReplyInlineMarkup` supplies inline buttons, `ReplyKeyboardMarkup` supplies
+  reply buttons, and `ReplyKeyboardHide`/`ReplyKeyboardForceReply` supply none.
+- Smoke searches newest-to-oldest only within the fresh action evidence for a
+  reply keyboard containing a known main-menu action, and also requires that
+  the same message has no inline classification.
+
 Real Telegram E2E runs showed that direct handler/service tests were not sufficient to prove which aiogram route owned AI questions, Watchlist Add, and Live callbacks. Production dispatcher construction now lives in `app/dispatcher.py`, and the verified routes are registered before their broader feature routers.
 
 - Consultant questions in `ConsultantStates.entering_question` are owned by the dedicated `consultant_question` router and call `answer_consultant_question`. Market Analysis remains a separate explicit button and no longer shares ownership of question messages.

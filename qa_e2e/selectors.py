@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from telethon.tl import types as tl_types
+
 
 class UnsafeButtonError(RuntimeError):
     pass
@@ -13,6 +15,8 @@ def normalize_label(value: str) -> str:
 
 
 def inline_buttons(message: Any) -> tuple[Any, ...]:
+    if not _is_markup(message, tl_types.ReplyInlineMarkup):
+        return ()
     rows = getattr(message, "buttons", None) or ()
     return tuple(button for row in rows for button in (row if isinstance(row, (list, tuple)) else (row,)))
 
@@ -42,6 +46,8 @@ def ensure_safe_button(button: Any) -> None:
 
 def reply_keyboard_labels(message: Any) -> tuple[str, ...]:
     markup = getattr(message, "reply_markup", None)
+    if not isinstance(markup, tl_types.ReplyKeyboardMarkup):
+        return ()
     rows = getattr(markup, "rows", None) or ()
     labels: list[str] = []
     for row in rows:
@@ -49,6 +55,11 @@ def reply_keyboard_labels(message: Any) -> tuple[str, ...]:
             text = getattr(button, "text", None)
             if text: labels.append(str(text))
     return tuple(labels)
+
+
+def _is_markup(message: Any, markup_type: type[Any]) -> bool:
+    """Classify by Telegram markup type, never by visible button shape/text."""
+    return isinstance(getattr(message, "reply_markup", None), markup_type)
 
 
 def select_reply_label(message: Any, candidates: tuple[str, ...]) -> str:
