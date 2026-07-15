@@ -49,3 +49,25 @@ class WalletPersistenceTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(renamed.label, "Main wallet")
                 self.assertTrue(await delete_wallet_profile(8, profile.id))
                 self.assertFalse(await delete_wallet_profile(8, profile.id))
+
+    async def test_duplicate_limit_ownership_and_stale_preserves_balance(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            db_name = str(Path(directory) / "test.db")
+            with patch("app.database.database.DB_NAME", db_name):
+                await init_db()
+            address = detect_wallet_address("0x" + "c" * 40)
+            success = WalletDiscoveryResult(address, ("ethereum",), (WalletSnapshot(
+                "ethereum", address.display_address,
+                (WalletAsset("ETH", 1), WalletAsset("USDT", 2, standard="ERC-20")), "test"),))
+            failed = WalletDiscoveryResult(address, ("ethereum",), (), ("timeout",), True)
+            with patch("app.services.wallet_service.DB_NAME", db_name), patch("app.services.wallet_service.WALLET_MAX_PER_USER", 1):
+                self.assertEqual(await save_discovered_wallet(10, success), (True, 1))
+                self.assertEqual(await save_discovered_wallet(10, success), (False, 0))
+                await save_discovered_wallet(10, failed)
+                profile = (await list_wallet_profiles(10))[0]
+                self.assertEqual((profile.native_balance, profile.usdt_balance), ("1", "2"))
+                self.assertEqual((profile.balance_status, profile.error_code), ("stale", "timeout"))
+                self.assertEqual(await list_wallet_profiles(11), [])
+                second = detect_wallet_address("0x" + "d" * 40)
+                with self.assertRaisesRegex(ValueError, "wallet_limit_reached"):
+                    await save_discovered_wallet(10, WalletDiscoveryResult(second, ("ethereum",), ()))

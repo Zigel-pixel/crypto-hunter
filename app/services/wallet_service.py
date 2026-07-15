@@ -161,9 +161,10 @@ async def save_discovered_wallet(telegram_id: int, result: WalletDiscoveryResult
             )
         elif result.warnings:
             # Preserve the last successful values; only status/error metadata changes.
+            error_code = str(result.warnings[0])
             await db.execute(
-                "UPDATE wallet_profiles SET last_refresh_at=?,updated_at=?,balance_status='stale',error_code='provider_unavailable' WHERE id=? AND telegram_id=?",
-                (created_at, created_at, wallet_id, telegram_id),
+                "UPDATE wallet_profiles SET last_refresh_at=?,updated_at=?,balance_status='stale',error_code=? WHERE id=? AND telegram_id=?",
+                (created_at, created_at, error_code, wallet_id, telegram_id),
             )
         await db.commit()
     return created, added

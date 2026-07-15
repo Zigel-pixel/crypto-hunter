@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import ssl
@@ -11,6 +12,7 @@ import aiohttp
 import certifi
 
 from app.integrations.blockchain.models import WalletAsset, WalletSnapshot
+from app.integrations.blockchain.errors import ProviderErrorCode, WalletProviderError
 
 CHAIN = "tron"
 DEFAULT_API_URL = "https://api.trongrid.io"
@@ -45,16 +47,24 @@ async def get_wallet(address: str) -> WalletSnapshot:
                 response.raise_for_status()
                 payload: Any = await response.json()
     except (aiohttp.ClientError, TimeoutError, ValueError) as exc:
-        raise RuntimeError("Tron balance provider is unavailable") from exc
+        if isinstance(exc, (TimeoutError, asyncio.TimeoutError)):
+            code = ProviderErrorCode.TIMEOUT
+        elif isinstance(exc, aiohttp.ClientResponseError) and exc.status == 429:
+            code = ProviderErrorCode.RATE_LIMITED
+        elif isinstance(exc, ValueError):
+            code = ProviderErrorCode.MALFORMED_RESPONSE
+        else:
+            code = ProviderErrorCode.PROVIDER_UNAVAILABLE
+        raise WalletProviderError(code, "Tron balance provider is unavailable") from exc
     rows = payload.get("data") if isinstance(payload, dict) else None
     account = rows[0] if isinstance(rows, list) and rows else {}
     if not isinstance(account, dict):
-        raise RuntimeError("Tron balance provider returned invalid data")
+        raise WalletProviderError(ProviderErrorCode.MALFORMED_RESPONSE)
     assets: list[WalletAsset] = []
     try:
         trx_amount = Decimal(int(account.get("balance", 0))) / Decimal(SUN_PER_TRX)
     except (TypeError, ValueError) as exc:
-        raise RuntimeError("Tron provider returned an invalid TRX balance") from exc
+        raise WalletProviderError(ProviderErrorCode.MALFORMED_RESPONSE) from exc
     assets.append(WalletAsset("TRX", trx_amount))
     try:
         for balances in account.get("trc20", []):

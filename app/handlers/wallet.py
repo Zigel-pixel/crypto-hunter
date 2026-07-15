@@ -7,6 +7,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
 from app.handlers.message_updates import safe_update_message
+from app.integrations.blockchain.errors import ProviderErrorCode
 from app.keyboards.main import action_labels
 from app.keyboards.wallet import BACK_BUTTON, build_discovery_keyboard, build_wallet_delete_confirmation, build_wallet_detail_keyboard, build_wallet_keyboard, build_wallet_profiles_keyboard, build_wallet_selection_keyboard, wallet_action_labels
 from app.services.settings_service import get_setting
@@ -220,7 +221,10 @@ async def remove_selected_wallet(message: types.Message, state: FSMContext) -> N
 
 
 def _format_discovery(result, language: str) -> str:
-    lines = [translate("wallet.scan_complete", language), f"Address: {result.address.display_address[:6]}…{result.address.display_address[-4:]}", ""]
+    detected_network = "Tron" if result.address.family.value == "tron" else "Ethereum"
+    lines = [translate("wallet.scan_complete", language),
+             f"{translate('wallet.address', language)}: {result.address.display_address[:6]}…{result.address.display_address[-4:]}",
+             f"{translate('wallet.detected_network', language)}: {detected_network}", ""]
     for snapshot in result.active:
         lines.append(snapshot.chain.replace("_", " ").title())
         for asset in snapshot.assets:
@@ -231,7 +235,9 @@ def _format_discovery(result, language: str) -> str:
         count = len(result.scanned_networks)
         lines.append(f"✅ Wallet scanned across {count} networks. No supported balances were found." if language == "English" else f"✅ Гаманець перевірено у {count} мережах. Підтримуваних балансів не знайдено.")
     if result.warnings:
-        lines.append(("⚠️ Partial provider failure: " if language == "English" else "⚠️ Частина провайдерів недоступна: ") + ", ".join(result.warnings))
+        codes = [item.value if isinstance(item, ProviderErrorCode) else ProviderErrorCode.PROVIDER_UNAVAILABLE.value for item in result.warnings]
+        messages = [translate(f"wallet.error.{code}", language) for code in dict.fromkeys(codes)]
+        lines.append(("⚠️ " if not result.stale else "⚠️ " + translate("wallet.stale", language) + ". ") + " ".join(messages))
     return "\n".join(lines).rstrip()
 
 
@@ -240,7 +246,7 @@ def _profiles_text(profiles, language: str) -> str:
         return "Гаманців ще немає." if language == "Ukrainian" else "No wallets added yet."
     lines = ["👛 Гаманці" if language == "Ukrainian" else "👛 Wallets", ""]
     for item in profiles:
-        lines.extend([f"💼 {item.label or 'Wallet'}", f"{item.address[:6]}…{item.address[-4:]}", f"{item.address_family.upper()} · {' • '.join(item.networks) or '—'}", ""])
+        lines.extend([f"💼 {item.label or translate('wallet.singular', language)}", f"{item.address[:6]}…{item.address[-4:]}", f"{' • '.join(item.networks) or '—'}", ""])
     return "\n".join(lines).rstrip()
 
 
@@ -250,8 +256,8 @@ def _profile_text(profile, language: str) -> str:
     status = translate("wallet.stale", language) if profile.balance_status == "stale" else translate("wallet.updated", language)
     return "\n".join([
         f"💼 {profile.label or ('Гаманець' if language == 'Ukrainian' else 'Wallet')}",
-        "", f"Address: {profile.address}", f"Network: {' • '.join(profile.networks) or '—'}",
-        f"Native: {native}", f"USDT: {usdt}",
+        "", f"{translate('wallet.address', language)}: {profile.address}", f"{translate('wallet.network', language)}: {' • '.join(profile.networks) or '—'}",
+        f"{translate('wallet.native_balance', language)}: {native}", f"{translate('wallet.usdt_balance', language)}: {usdt}",
         f"{status}: {profile.last_success_at or '—'}",
     ])
 

@@ -107,6 +107,11 @@ def build_scenarios(client: TelegramE2EClient, config: E2EConfig) -> tuple[Scena
         current = _latest(opened)
         if current is None: return False, "Wallet menu unavailable", _evidence(opened)
         warning = await client.send_reply_button(_raw_message_placeholder(current), ("➕ Додати гаманець", "➕ Add wallet"))
+        warning_text = "\n".join(item.text for item in warning.messages).casefold()
+        security_ok = any(term in warning_text for term in ("seed", "приватн", "private key"))
+        invalid = await client.send("not-a-wallet")
+        invalid_text = "\n".join(item.text for item in invalid.messages).casefold()
+        invalid_ok = any(term in invalid_text for term in ("invalid", "некорект"))
         response = await client.send(PUBLIC_EVM_TEST_ADDRESS, timeout=config.long_timeout)
         text = "\n".join(item.text for item in response.messages)
         lowered = text.casefold()
@@ -116,8 +121,26 @@ def build_scenarios(client: TelegramE2EClient, config: E2EConfig) -> tuple[Scena
         networks_ok = any(name in lowered for name in ("ethereum", "bnb", "polygon", "arbitrum", "base", "optimism", "avalanche", "мереж"))
         provider_error = contains_raw_error(text) or "traceback" in lowered or "json-rpc" in lowered
         outcome = bool(values) or "no supported balances" in lowered or "підтримуваних балансів не знайдено" in lowered
-        ok = outcome and parseable and standards_ok and networks_ok and not provider_error
-        return ok, f"messages={len(response.messages)}, values={len(values)}, parseable={parseable}, standards={standards_ok}, networks={networks_ok}, provider_error={provider_error}", _evidence(response)
+        raw = client.last_raw_messages[-1] if client.last_raw_messages else None
+        if raw is None:
+            return False, "Ethereum confirmation controls missing", _evidence(response)
+        cancelled = await client.click_inline(raw, callback_prefix="wallet:cancel")
+        cancel_ok = bool(cancelled.messages)
+        restarted = await client.send("/start")
+        main = _latest(restarted)
+        wallets_menu = await client.send_reply_button(_raw_message_placeholder(main), ("👛 Гаманці", "👛 Wallets")) if main else None
+        wallet_menu = _latest(wallets_menu) if wallets_menu else None
+        add_again = await client.send_reply_button(_raw_message_placeholder(wallet_menu), ("➕ Додати гаманець", "➕ Add wallet")) if wallet_menu else None
+        tron_ok = False
+        if add_again is not None:
+            tron = await client.send(PUBLIC_TRON_TEST_ADDRESS, timeout=config.long_timeout)
+            tron_text = "\n".join(item.text for item in tron.messages).casefold()
+            tron_ok = "tron" in tron_text or "trc-20" in tron_text
+            raw = client.last_raw_messages[-1] if client.last_raw_messages else None
+            if raw is not None:
+                await client.click_inline(raw, callback_prefix="wallet:cancel")
+        ok = security_ok and invalid_ok and outcome and parseable and standards_ok and networks_ok and not provider_error and cancel_ok and tron_ok
+        return ok, f"security={security_ok}, invalid={invalid_ok}, ethereum={networks_ok}, tron={tron_ok}, cancel={cancel_ok}, provider_error={provider_error}", _evidence(response)
 
     return (
         _scenario(client, config, "e2e.smoke.start", "Start and main keyboard", "smoke", "Start responds with a safe main reply keyboard", smoke_start, severity=Severity.CRITICAL),

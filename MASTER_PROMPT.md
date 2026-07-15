@@ -97,7 +97,9 @@ Never claim production readiness unless every major feature is fully implemented
 
 Update PROJECT_CONTEXT.md whenever project state changes.
 
-Do not commit or push.
+Do not commit or push by default. Commit and push only when the current user
+instruction explicitly requests it. Never force-push and never commit secrets
+or runtime data.
 
 ==================================================
 STABILITY

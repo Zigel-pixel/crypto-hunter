@@ -2,15 +2,11 @@
 
 from __future__ import annotations
 
-import re
-
 from app.integrations.blockchain.models import WalletSnapshot
 from app.integrations.providers.manager import (
     ProviderManagerError,
     ethereum_provider_manager,
 )
-
-ADDRESS_PATTERN = re.compile(r"^0x[a-fA-F0-9]{40}$")
 
 class EthereumWalletError(RuntimeError):
     """Raised after every configured Ethereum provider has failed."""
@@ -18,7 +14,11 @@ class EthereumWalletError(RuntimeError):
 
 def validate_address(address: str) -> bool:
     """Return whether *address* has valid Ethereum address syntax."""
-    return bool(ADDRESS_PATTERN.fullmatch(address))
+    from app.models.wallet_address import AddressFamily
+    from app.services.wallet_address_service import detect_wallet_address
+
+    detected = detect_wallet_address(address)
+    return bool(detected and detected.family is AddressFamily.EVM)
 
 
 async def get_wallet(address: str) -> WalletSnapshot:

@@ -4,6 +4,7 @@ import hashlib
 import re
 
 from app.models.wallet_address import AddressFamily, NormalizedWalletAddress
+from app.utils.keccak import keccak_256
 
 _EVM_PATTERN = re.compile(r"^0x[0-9a-fA-F]{40}$")
 _BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
@@ -16,6 +17,13 @@ def detect_wallet_address(value: str) -> NormalizedWalletAddress | None:
         return None
     address = value
     if _EVM_PATTERN.fullmatch(address):
+        body = address[2:]
+        letters = [character for character in body if character.isalpha()]
+        if letters and not (all(c.islower() for c in letters) or all(c.isupper() for c in letters)):
+            digest = keccak_256(body.lower().encode("ascii")).hex()
+            if any(character.isalpha() and character.isupper() != (int(digest[index], 16) >= 8)
+                   for index, character in enumerate(body)):
+                return None
         return NormalizedWalletAddress(address, address.lower(), AddressFamily.EVM)
     if _is_valid_tron(address):
         return NormalizedWalletAddress(address, address, AddressFamily.TRON)

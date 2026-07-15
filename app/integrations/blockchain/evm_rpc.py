@@ -9,16 +9,18 @@ import aiohttp
 import re
 
 from app.integrations.blockchain.models import WalletAsset, WalletSnapshot
+from app.integrations.blockchain.errors import ProviderErrorCode, WalletProviderError
 from app.integrations.blockchain.network_registry import EvmNetwork
 
 
-class EvmRpcError(RuntimeError):
-    pass
+class EvmRpcError(WalletProviderError):
+    def __init__(self, message: str, code: ProviderErrorCode = ProviderErrorCode.PROVIDER_UNAVAILABLE) -> None:
+        super().__init__(code, message)
 
 
 async def get_wallet(network: EvmNetwork, address: str, timeout_seconds: int) -> WalletSnapshot:
     if not network.rpc_url:
-        raise EvmRpcError(f"{network.display_name} is disabled")
+        raise EvmRpcError(f"{network.display_name} is disabled", ProviderErrorCode.PROVIDER_NOT_CONFIGURED)
     timeout = aiohttp.ClientTimeout(total=timeout_seconds)
     async with aiohttp.ClientSession(timeout=timeout) as session:
         calls = [_rpc(session, network.rpc_url, "eth_getBalance", [address, "latest"], 1)]
@@ -32,7 +34,7 @@ async def get_wallet(network: EvmNetwork, address: str, timeout_seconds: int) ->
     assets: list[WalletAsset] = []
     amount = _amount(native, 18)
     if amount is None:
-        raise EvmRpcError(f"{network.display_name} returned an invalid native balance")
+        raise EvmRpcError(f"{network.display_name} returned an invalid native balance", ProviderErrorCode.MALFORMED_RESPONSE)
     assets.append(WalletAsset(network.native_symbol, amount))
     warnings: list[str] = []
     for token, result in zip(network.tokens, results[1:], strict=True):
@@ -51,16 +53,18 @@ async def _rpc(session: aiohttp.ClientSession, url: str, method: str, params: li
     try:
         async with session.post(url, json={"jsonrpc": "2.0", "id": request_id, "method": method, "params": params}) as response:
             if response.status == 429:
-                raise EvmRpcError("RPC rate limit exceeded")
+                raise EvmRpcError("RPC rate limit exceeded", ProviderErrorCode.RATE_LIMITED)
             if response.status >= 400:
                 raise EvmRpcError(f"RPC HTTP {response.status}")
             payload = await response.json()
     except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as exc:
-        raise EvmRpcError("RPC request failed") from exc
+        code = ProviderErrorCode.TIMEOUT if isinstance(exc, asyncio.TimeoutError) else ProviderErrorCode.PROVIDER_UNAVAILABLE
+        raise EvmRpcError("RPC request failed", code) from exc
     if (not isinstance(payload, dict) or payload.get("jsonrpc") != "2.0"
             or payload.get("id") != request_id or "error" in payload
             or not isinstance(payload.get("result"), str)):
-        raise EvmRpcError("Malformed RPC response")
+        code = ProviderErrorCode.CONTRACT_ERROR if isinstance(payload, dict) and "error" in payload else ProviderErrorCode.MALFORMED_RESPONSE
+        raise EvmRpcError("Malformed RPC response", code)
     return payload["result"]
 
 

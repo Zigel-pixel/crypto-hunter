@@ -7,6 +7,8 @@ never asks for a seed phrase, private key, password, or signing permission.
 This sprint supports ETH and ERC-20 USDT on Ethereum, plus TRX and TRC-20 USDT
 on Tron. Address detection validates the complete Ethereum syntax or Tron
 Base58Check checksum.
+Mixed-case Ethereum addresses must pass EIP-55 using Ethereum-compatible
+Keccak-256; lowercase and uppercase hexadecimal forms remain accepted.
 
 Configure `ETHEREUM_RPC_URL` for Ethereum and optionally `TRON_API_URL` plus
 `TRONGRID_API_KEY` for TronGrid. `WALLET_BALANCE_CACHE_SECONDS` controls the

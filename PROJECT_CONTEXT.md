@@ -453,9 +453,22 @@ Crypto Hunter should become a full crypto assistant including:
 - Automated validation: compileall passed; pytest reported 149 passed and 6
   subtests passed. Real Telegram polling and production E2E were not run.
 
-Known limitations: optional EIP-55 checksum enforcement is not implemented;
-provider error typing remains coarser than the requested complete taxonomy;
-the existing E2E wallet scenario was listed but not expanded or executed.
+At that checkpoint, EIP-55, complete provider error typing, and expanded wallet
+E2E coverage remained for the follow-up completion commit below.
+
+## Ethereum/Tron wallet completion (2026-07-15)
+
+- Mixed-case Ethereum addresses now require EIP-55. A small dependency-free
+  legacy Keccak-256 implementation is verified against canonical digest vectors;
+  standardized SHA3-256 is not used. Lowercase/uppercase addresses remain valid.
+- Wallet providers classify failures with stable safe codes for configuration,
+  validation, timeout, rate limit, availability, response, network, contract,
+  and unknown errors. Telegram renders localized explanations rather than raw
+  exception strings, and stale refreshes preserve prior Decimal-string balances.
+- Persistence tests cover duplicates, wallet limits, ownership isolation, and
+  stale-value retention. UI tests audit Decimal formatting and Telegram's
+  callback limit. The non-destructive E2E wallet scenario now exercises invalid,
+  Ethereum, Tron, cancellation, and public-address-only warnings without saving.
 
 Real Telegram E2E runs showed that direct handler/service tests were not sufficient to prove which aiogram route owned AI questions, Watchlist Add, and Live callbacks. Production dispatcher construction now lives in `app/dispatcher.py`, and the verified routes are registered before their broader feature routers.
 

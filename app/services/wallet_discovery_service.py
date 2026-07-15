@@ -4,6 +4,7 @@ import asyncio
 import time
 
 from app.integrations.blockchain import tron
+from app.integrations.blockchain.errors import ProviderErrorCode, classify_provider_error
 from app.integrations.blockchain.evm_rpc import get_wallet as get_evm_wallet
 from app.integrations.blockchain.network_registry import enabled_evm_networks
 from app.models.wallet_address import AddressFamily
@@ -36,11 +37,12 @@ async def discover_wallet(value: str, *, bypass_cooldown: bool = False) -> Walle
                 result = WalletDiscoveryResult(address, ("tron",), (snapshot,))
                 _cache[address.comparison_address] = (time.monotonic(), result)
                 return result
-            except Exception:
+            except Exception as exc:
+                code = classify_provider_error(exc)
                 if cached:
-                    stale = WalletDiscoveryResult(address, ("tron",), cached[1].active, ("TRON provider unavailable; cached data is stale",))
+                    stale = WalletDiscoveryResult(address, ("tron",), cached[1].active, (code,), True)
                     return stale
-                return WalletDiscoveryResult(address, ("tron",), (), ("TRON provider unavailable",))
+                return WalletDiscoveryResult(address, ("tron",), (), (code,))
 
         # Address auto-detection in this sprint maps EVM syntax to Ethereum;
         # legacy chain integrations remain available to their existing callers.
@@ -55,7 +57,7 @@ async def discover_wallet(value: str, *, bypass_cooldown: bool = False) -> Walle
             warning
             for network, result in zip(networks, results, strict=True)
             for warning in (
-                (f"{network.display_name} provider unavailable",)
+                (classify_provider_error(result),)
                 if isinstance(result, BaseException)
                 else result.warnings
             )
@@ -64,5 +66,5 @@ async def discover_wallet(value: str, *, bypass_cooldown: bool = False) -> Walle
         if active:
             _cache[address.comparison_address] = (time.monotonic(), result)
         elif cached:
-            return WalletDiscoveryResult(address, result.scanned_networks, cached[1].active, warnings + ("Cached data is stale",))
+            return WalletDiscoveryResult(address, result.scanned_networks, cached[1].active, warnings, True)
         return result

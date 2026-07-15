@@ -23,6 +23,17 @@ class WalletAddressTests(unittest.TestCase):
     def test_lowercase_evm_is_valid(self) -> None:
         self.assertIsNotNone(detect_wallet_address("0x" + "a" * 40))
 
+    def test_valid_and_invalid_eip55(self) -> None:
+        valid = "0x52908400098527886E0F7030069857D2E4169EE7"
+        self.assertIsNotNone(detect_wallet_address(valid))
+        self.assertIsNone(detect_wallet_address(valid.replace("E", "e", 1)))
+
+    def test_uppercase_evm_is_valid(self) -> None:
+        self.assertIsNotNone(detect_wallet_address("0x" + "ABCDEF" * 6 + "ABCD"))
+
+    def test_internal_whitespace_is_invalid(self) -> None:
+        self.assertIsNone(detect_wallet_address("0x" + "a" * 20 + " " + "a" * 20))
+
     def test_malformed_evm_is_invalid(self) -> None:
         self.assertIsNone(detect_wallet_address("0x" + "g" * 40))
         self.assertIsNone(detect_wallet_address("0x1234"))
