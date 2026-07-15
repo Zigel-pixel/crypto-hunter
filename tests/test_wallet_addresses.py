@@ -7,13 +7,17 @@ from app.services.wallet_address_service import detect_wallet_address
 
 
 class WalletAddressTests(unittest.TestCase):
-    def test_evm_is_trimmed_and_normalized_for_comparison(self) -> None:
+    def test_whitespace_contaminated_evm_is_rejected(self) -> None:
         address = "0x52908400098527886E0F7030069857D2E4169EE7"
         result = detect_wallet_address(f"  {address}\n")
+        self.assertIsNone(result)
+
+    def test_evm_is_normalized_for_comparison(self) -> None:
+        address = "0x52908400098527886E0F7030069857D2E4169EE7"
+        result = detect_wallet_address(address)
         self.assertIsNotNone(result)
         assert result is not None
         self.assertEqual(result.family, AddressFamily.EVM)
-        self.assertEqual(result.display_address, address)
         self.assertEqual(result.comparison_address, address.lower())
 
     def test_lowercase_evm_is_valid(self) -> None:

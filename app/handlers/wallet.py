@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from decimal import Decimal
+
 from aiogram import F, Router, types
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -64,7 +66,12 @@ async def confirm_wallet(callback: types.CallbackQuery, state: FSMContext) -> No
         await state.clear()
         return
     result = await discover_wallet(address, bypass_cooldown=True)
-    created, added = await save_discovered_wallet(callback.from_user.id, result)
+    try:
+        created, added = await save_discovered_wallet(callback.from_user.id, result)
+    except ValueError as exc:
+        if str(exc) == "wallet_limit_reached" and callback.message:
+            await safe_update_message(callback.message, translate("wallet.limit", language), None)
+        return
     await state.clear()
     text = "✅ Wallet added." if created else ("✅ Existing wallet updated." if added else "ℹ️ This wallet is already saved.")
     if language == "Ukrainian":
@@ -238,9 +245,21 @@ def _profiles_text(profiles, language: str) -> str:
 
 
 def _profile_text(profile, language: str) -> str:
+    native = f"{_format_decimal(profile.native_balance)} {profile.native_symbol}" if profile.native_balance is not None else "—"
+    usdt = f"{_format_decimal(profile.usdt_balance)} USDT" if profile.usdt_balance is not None else "—"
+    status = translate("wallet.stale", language) if profile.balance_status == "stale" else translate("wallet.updated", language)
     return "\n".join([
         f"💼 {profile.label or ('Гаманець' if language == 'Ukrainian' else 'Wallet')}",
-        "", f"Address: {profile.address}", f"Family: {profile.address_family.upper()}",
-        f"Networks: {' • '.join(profile.networks) or '—'}",
-        f"Last refresh: {profile.last_refresh_at or 'N/A'}",
+        "", f"Address: {profile.address}", f"Network: {' • '.join(profile.networks) or '—'}",
+        f"Native: {native}", f"USDT: {usdt}",
+        f"{status}: {profile.last_success_at or '—'}",
     ])
+
+
+def _format_decimal(value: str | None) -> str:
+    if value is None:
+        return "—"
+    rendered = format(Decimal(value), "f")
+    if "." in rendered:
+        rendered = rendered.rstrip("0").rstrip(".")
+    return rendered or "0"

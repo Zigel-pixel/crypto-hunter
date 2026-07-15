@@ -37,8 +37,6 @@ ERC20 = "ERC-20"
 NETWORKS: tuple[EvmNetwork, ...] = (
     EvmNetwork("ethereum", "Ethereum", 1, "ETH", "ETHEREUM_RPC_URL", "https://ethereum-rpc.publicnode.com", "https://etherscan.io", (
         TokenContract("USDT", "0xdAC17F958D2ee523a2206206994597C13D831ec7", 6, ERC20),
-        TokenContract("USDC", "0xA0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", 6, ERC20),
-        TokenContract("DAI", "0x6B175474E89094C44Da98b954EedeAC495271d0F", 18, ERC20),
     )),
     EvmNetwork("bnb", "BNB Smart Chain", 56, "BNB", "BSC_RPC_URL", "https://bsc-rpc.publicnode.com", "https://bscscan.com"),
     EvmNetwork("polygon", "Polygon", 137, "POL", "POLYGON_RPC_URL", None, "https://polygonscan.com"),

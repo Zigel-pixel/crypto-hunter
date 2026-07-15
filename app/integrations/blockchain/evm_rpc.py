@@ -33,8 +33,7 @@ async def get_wallet(network: EvmNetwork, address: str, timeout_seconds: int) ->
     amount = _amount(native, 18)
     if amount is None:
         raise EvmRpcError(f"{network.display_name} returned an invalid native balance")
-    if amount:
-        assets.append(WalletAsset(network.native_symbol, amount))
+    assets.append(WalletAsset(network.native_symbol, amount))
     warnings: list[str] = []
     for token, result in zip(network.tokens, results[1:], strict=True):
         if isinstance(result, BaseException):
@@ -43,7 +42,7 @@ async def get_wallet(network: EvmNetwork, address: str, timeout_seconds: int) ->
         token_amount = _amount(result, token.decimals)
         if token_amount is None:
             warnings.append(f"{network.display_name} {token.symbol} provider response invalid")
-        elif token_amount:
+        else:
             assets.append(WalletAsset(token.symbol, token_amount, standard=token.standard))
     return WalletSnapshot(network.network_id, address, tuple(assets), "json_rpc", updated_at=datetime.now(timezone.utc), warnings=tuple(warnings))
 
@@ -65,10 +64,10 @@ async def _rpc(session: aiohttp.ClientSession, url: str, method: str, params: li
     return payload["result"]
 
 
-def _amount(value: Any, decimals: int) -> float | None:
+def _amount(value: Any, decimals: int) -> Decimal | None:
     if not isinstance(value, str) or not re.fullmatch(r"0x[0-9a-fA-F]+", value) or decimals < 0:
         return None
     try:
-        return float(Decimal(int(value, 16)) / (Decimal(10) ** decimals))
+        return Decimal(int(value, 16)) / (Decimal(10) ** decimals)
     except (TypeError, ValueError, ArithmeticError):
         return None

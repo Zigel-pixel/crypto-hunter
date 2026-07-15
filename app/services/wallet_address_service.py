@@ -10,7 +10,11 @@ _BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 
 
 def detect_wallet_address(value: str) -> NormalizedWalletAddress | None:
-    address = value.strip()
+    # Pasted whitespace is rejected: silently changing blockchain identifiers is
+    # surprising and makes validation less strict.
+    if value != value.strip():
+        return None
+    address = value
     if _EVM_PATTERN.fullmatch(address):
         return NormalizedWalletAddress(address, address.lower(), AddressFamily.EVM)
     if _is_valid_tron(address):

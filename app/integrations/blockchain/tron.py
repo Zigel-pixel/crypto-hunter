@@ -4,6 +4,7 @@ import logging
 import os
 import ssl
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Any
 
 import aiohttp
@@ -12,7 +13,7 @@ import certifi
 from app.integrations.blockchain.models import WalletAsset, WalletSnapshot
 
 CHAIN = "tron"
-API_URL = "https://api.trongrid.io/v1/accounts/{address}"
+DEFAULT_API_URL = "https://api.trongrid.io"
 USDT_CONTRACT = "TXLAQ63Xg1NAzckPwKHvzw7CSEmLMEqcdj"
 SUN_PER_TRX = 1_000_000
 REQUEST_TIMEOUT_SECONDS = 15
@@ -35,10 +36,11 @@ async def get_wallet(address: str) -> WalletSnapshot:
     try:
         async with aiohttp.ClientSession(timeout=timeout) as session:
             headers = {}
-            if api_key := os.getenv("TRON_API_KEY", "").strip():
+            if api_key := (os.getenv("TRONGRID_API_KEY") or os.getenv("TRON_API_KEY", "")).strip():
                 headers["TRON-PRO-API-KEY"] = api_key
+            api_url = os.getenv("TRON_API_URL", DEFAULT_API_URL).rstrip("/")
             async with session.get(
-                API_URL.format(address=address), ssl=ssl_context, headers=headers
+                f"{api_url}/v1/accounts/{address}", ssl=ssl_context, headers=headers
             ) as response:
                 response.raise_for_status()
                 payload: Any = await response.json()
@@ -50,19 +52,19 @@ async def get_wallet(address: str) -> WalletSnapshot:
         raise RuntimeError("Tron balance provider returned invalid data")
     assets: list[WalletAsset] = []
     try:
-        trx_amount = int(account.get("balance", 0)) / SUN_PER_TRX
+        trx_amount = Decimal(int(account.get("balance", 0))) / Decimal(SUN_PER_TRX)
     except (TypeError, ValueError) as exc:
         raise RuntimeError("Tron provider returned an invalid TRX balance") from exc
-    if trx_amount:
-        assets.append(WalletAsset("TRX", trx_amount))
+    assets.append(WalletAsset("TRX", trx_amount))
     try:
         for balances in account.get("trc20", []):
             if isinstance(balances, dict) and USDT_CONTRACT in balances:
-                amount = int(balances[USDT_CONTRACT]) / 1_000_000
-                if amount:
-                    assets.append(WalletAsset("USDT", amount, standard="TRC-20"))
+                amount = Decimal(int(balances[USDT_CONTRACT])) / Decimal(1_000_000)
+                assets.append(WalletAsset("USDT", amount, standard="TRC-20"))
     except (TypeError, ValueError) as exc:
         logger.warning("TRON USDT balance was malformed: %s", exc)
+    if not any(asset.symbol == "USDT" for asset in assets):
+        assets.append(WalletAsset("USDT", Decimal(0), standard="TRC-20"))
     return WalletSnapshot(
         chain=CHAIN,
         address=address,

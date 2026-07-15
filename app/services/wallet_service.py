@@ -17,6 +17,7 @@ from app.models.wallet_address import AddressFamily
 from app.models.wallet_discovery import WalletDiscoveryResult
 from app.services.wallet_address_service import detect_wallet_address
 from app.services.market_service import fetch_market_prices
+from app.utils.config import WALLET_MAX_PER_USER
 
 DB_NAME = "crypto.db"
 
@@ -116,12 +117,17 @@ async def save_discovered_wallet(telegram_id: int, result: WalletDiscoveryResult
     if family == AddressFamily.TRON.value and not networks:
         networks = ["tron"]  # a valid zero-balance TRON address is still saveable
     async with aiosqlite.connect(DB_NAME) as db:
+        count = (await (await db.execute(
+            "SELECT count(*) FROM wallet_profiles WHERE telegram_id=?", (telegram_id,)
+        )).fetchone())[0]
         cursor = await db.execute(
             "SELECT id FROM wallet_profiles WHERE telegram_id=? AND address_family=? AND address=? COLLATE NOCASE",
             (telegram_id, family, address),
         )
         row = await cursor.fetchone()
         created = row is None
+        if created and count >= WALLET_MAX_PER_USER:
+            raise ValueError("wallet_limit_reached")
         if row is None:
             cursor = await db.execute(
                 "INSERT INTO wallet_profiles (telegram_id,address,address_family,created_at,last_refresh_at) VALUES (?,?,?,?,?)",
@@ -130,7 +136,7 @@ async def save_discovered_wallet(telegram_id: int, result: WalletDiscoveryResult
             wallet_id = cursor.lastrowid
         else:
             wallet_id = row[0]
-            await db.execute("UPDATE wallet_profiles SET last_refresh_at=? WHERE id=?", (created_at, wallet_id))
+            await db.execute("UPDATE wallet_profiles SET last_refresh_at=?,updated_at=? WHERE id=?", (created_at, created_at, wallet_id))
         added = 0
         for network in networks:
             cursor = await db.execute("INSERT OR IGNORE INTO wallet_networks (wallet_id,network) VALUES (?,?)", (wallet_id, network))
@@ -139,6 +145,25 @@ async def save_discovered_wallet(telegram_id: int, result: WalletDiscoveryResult
             await db.execute(
                 "INSERT OR IGNORE INTO wallets (telegram_id,network,address,created_at) VALUES (?,?,?,?)",
                 (telegram_id, network, address, created_at),
+            )
+        if result.active:
+            snapshot = result.active[0]
+            native = next((asset for asset in snapshot.assets if asset.symbol != "USDT"), None)
+            usdt = next((asset for asset in snapshot.assets if asset.symbol == "USDT"), None)
+            await db.execute(
+                """UPDATE wallet_profiles SET last_refresh_at=?,updated_at=?,last_success_at=?,
+                   native_balance=?,usdt_balance=?,native_symbol=?,balance_status='fresh',error_code=NULL
+                   WHERE id=? AND telegram_id=?""",
+                (created_at, created_at, created_at,
+                 str(native.amount) if native else "0", str(usdt.amount) if usdt else "0",
+                 native.symbol if native else ("TRX" if family == "tron" else "ETH"),
+                 wallet_id, telegram_id),
+            )
+        elif result.warnings:
+            # Preserve the last successful values; only status/error metadata changes.
+            await db.execute(
+                "UPDATE wallet_profiles SET last_refresh_at=?,updated_at=?,balance_status='stale',error_code='provider_unavailable' WHERE id=? AND telegram_id=?",
+                (created_at, created_at, wallet_id, telegram_id),
             )
         await db.commit()
     return created, added
@@ -162,17 +187,18 @@ async def list_wallets(telegram_id: int) -> list[StoredWallet]:
 async def list_wallet_profiles(telegram_id: int) -> list[WalletProfile]:
     async with aiosqlite.connect(DB_NAME) as db:
         cursor = await db.execute("""
-            SELECT p.id,p.address,p.address_family,p.label,p.last_refresh_at,n.network
+            SELECT p.id,p.address,p.address_family,p.label,p.last_refresh_at,n.network,
+                   p.last_success_at,p.native_balance,p.usdt_balance,p.native_symbol,p.balance_status,p.error_code
             FROM wallet_profiles p LEFT JOIN wallet_networks n ON n.wallet_id=p.id
             WHERE p.telegram_id=? ORDER BY p.created_at,p.id,n.network
         """, (telegram_id,))
         rows = await cursor.fetchall()
     grouped: dict[int, list] = {}
     for row in rows:
-        item = grouped.setdefault(row[0], [*row[:5], []])
+        item = grouped.setdefault(row[0], [*row[:5], [], *row[6:]])
         if row[5]:
             item[5].append(row[5])
-    return [WalletProfile(item[0], item[1], item[2], item[3], tuple(item[5]), item[4]) for item in grouped.values()]
+    return [WalletProfile(item[0], item[1], item[2], item[3], tuple(item[5]), item[4], *item[6:]) for item in grouped.values()]
 
 
 async def get_wallet_profile(telegram_id: int, profile_id: int) -> WalletProfile | None:
@@ -181,7 +207,7 @@ async def get_wallet_profile(telegram_id: int, profile_id: int) -> WalletProfile
 
 async def rename_wallet_profile(telegram_id: int, profile_id: int, label: str) -> bool:
     cleaned = " ".join(label.split())
-    if not 1 <= len(cleaned) <= 40:
+    if not 1 <= len(cleaned) <= 40 or any(ord(character) < 32 or ord(character) == 127 for character in label):
         raise ValueError("Wallet label must contain 1-40 characters")
     async with aiosqlite.connect(DB_NAME) as db:
         cursor = await db.execute("UPDATE wallet_profiles SET label=? WHERE id=? AND telegram_id=?", (cleaned, profile_id, telegram_id))

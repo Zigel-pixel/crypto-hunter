@@ -17,3 +17,9 @@ class WalletProfile:
     label: str | None
     networks: tuple[str, ...]
     last_refresh_at: str | None
+    last_success_at: str | None = None
+    native_balance: str | None = None
+    usdt_balance: str | None = None
+    native_symbol: str | None = None
+    balance_status: str = "unknown"
+    error_code: str | None = None

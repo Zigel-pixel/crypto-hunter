@@ -436,6 +436,27 @@ Crypto Hunter should become a full crypto assistant including:
 - Production deployment
 ## Production Telegram route isolation (July 2026)
 
+## Ethereum/Tron wallet hardening (2026-07-15)
+
+- The address-first wallet flow now limits EVM discovery to Ethereum for this
+  sprint while preserving older chain integrations for compatibility. Tron
+  continues to require a valid mainnet Base58Check payload.
+- Provider amounts use `Decimal`; ETH/TRX and USDT zero balances are retained
+  explicitly. SQLite persists balances as text along with native symbol,
+  last-success timestamp, refresh status, and a safe error code.
+- Additive, idempotent `wallet_profiles` migrations preserve existing rows.
+  A failed refresh marks prior values stale without erasing them. Per-address
+  locks coalesce concurrent scans and a configurable TTL avoids repeat calls.
+- `TRON_API_URL` and `TRONGRID_API_KEY` are supported, with the legacy
+  `TRON_API_KEY` retained as a compatibility fallback. The default wallet cap
+  is 10 and remains enforced in the service as well as unique-address storage.
+- Automated validation: compileall passed; pytest reported 149 passed and 6
+  subtests passed. Real Telegram polling and production E2E were not run.
+
+Known limitations: optional EIP-55 checksum enforcement is not implemented;
+provider error typing remains coarser than the requested complete taxonomy;
+the existing E2E wallet scenario was listed but not expanded or executed.
+
 Real Telegram E2E runs showed that direct handler/service tests were not sufficient to prove which aiogram route owned AI questions, Watchlist Add, and Live callbacks. Production dispatcher construction now lives in `app/dispatcher.py`, and the verified routes are registered before their broader feature routers.
 
 - Consultant questions in `ConsultantStates.entering_question` are owned by the dedicated `consultant_question` router and call `answer_consultant_question`. Market Analysis remains a separate explicit button and no longer shares ownership of question messages.

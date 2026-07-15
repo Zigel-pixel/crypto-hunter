@@ -39,6 +39,16 @@ async def init_db() -> None:
             )
             """
         )
+        cursor = await db.execute("PRAGMA table_info(wallet_profiles)")
+        wallet_columns = {row[1] for row in await cursor.fetchall()}
+        for name, definition in {
+            "updated_at": "TEXT", "last_success_at": "TEXT",
+            "native_balance": "TEXT", "usdt_balance": "TEXT",
+            "native_symbol": "TEXT", "balance_status": "TEXT NOT NULL DEFAULT 'unknown'",
+            "error_code": "TEXT",
+        }.items():
+            if name not in wallet_columns:
+                await db.execute(f"ALTER TABLE wallet_profiles ADD COLUMN {name} {definition}")
 
         cursor = await db.execute("PRAGMA table_info(users)")
         user_columns = {row[1] for row in await cursor.fetchall()}

@@ -1,5 +1,26 @@
 # Crypto Hunter
 
+## Ethereum and Tron wallets
+
+Wallet monitoring is read-only: the bot accepts public addresses only and
+never asks for a seed phrase, private key, password, or signing permission.
+This sprint supports ETH and ERC-20 USDT on Ethereum, plus TRX and TRC-20 USDT
+on Tron. Address detection validates the complete Ethereum syntax or Tron
+Base58Check checksum.
+
+Configure `ETHEREUM_RPC_URL` for Ethereum and optionally `TRON_API_URL` plus
+`TRONGRID_API_KEY` for TronGrid. `WALLET_BALANCE_CACHE_SECONDS` controls the
+in-memory balance TTL and `WALLET_MAX_PER_USER` limits saved public addresses.
+The bot still starts if a provider is unavailable; saved successful balances
+remain visible and are marked stale after a failed refresh.
+
+Run wallet checks with:
+
+```powershell
+python -m pytest -q tests/test_wallet_addresses.py tests/test_wallet_discovery.py tests/test_wallet_persistence.py tests/test_evm_rpc.py
+python -m qa_e2e list
+```
+
 Crypto Hunter is an MVP Telegram bot for cryptocurrency market tracking, portfolio utilities, alerts, news, and read-only public-wallet monitoring. Wallet features accept public addresses only. Never send a seed phrase, private key, password, or recovery phrase.
 
 ## Features

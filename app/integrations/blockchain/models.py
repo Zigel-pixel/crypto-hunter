@@ -2,13 +2,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from decimal import Decimal
 
 
 @dataclass(frozen=True)
 class WalletAsset:
     symbol: str
-    amount: float
-    usd_value: float | None = None
+    amount: Decimal
+    usd_value: Decimal | None = None
     standard: str | None = None
 
 
