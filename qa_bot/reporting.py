@@ -12,7 +12,7 @@ def telegram_summary(report: RunReport) -> str:
     duration = (report.finished_at - report.started_at).total_seconds()
     return "\n".join((
         "🧪 Crypto Hunter QA complete", "", f"Commit: {report.commit}", f"Suite: {report.run_type}", f"Duration: {duration:.1f}s", "",
-        f"✅ Passed: {report.count(Status.PASSED)}", f"❌ Failed: {report.count(Status.FAILED)}", f"⚠️ Errors: {report.count(Status.ERROR)}", f"⏭ Skipped: {report.count(Status.SKIPPED)}", f"⛔ Cancelled: {report.count(Status.CANCELLED)}",
+        f"✅ Passed: {report.count(Status.PASSED)}", f"🔁 Passed with retry: {report.count(Status.PASSED_WITH_RETRY)}", f"❌ Failed: {report.count(Status.FAILED)}", f"⚠️ Errors: {report.count(Status.ERROR)}", f"⏭ Skipped: {report.count(Status.SKIPPED)}", f"⛔ Cancelled: {report.count(Status.CANCELLED)}",
     ))
 
 
@@ -39,7 +39,10 @@ def json_report(report: RunReport) -> str:
 def format_bug_report(result: ScenarioResult, report: RunReport) -> str:
     steps = result.reproduction_steps or ("Run the named QA scenario.",)
     return "\n".join((
-        f"### [QA][{result.suite}] {result.title}", "", "#### Environment", f"- Branch: {report.branch}", f"- Commit: {report.commit}", f"- Platform: {report.environment}", f"- Run type: {report.run_type}", "", "#### Severity", result.severity.value.title(), "", "#### Steps to reproduce", *(f"{i}. {redact(step)}" for i, step in enumerate(steps, 1)), "", "#### Expected", redact(result.expected), "", "#### Actual", redact(result.actual), "", "#### Evidence", redact("; ".join(result.evidence) or result.assertion_details or "No additional evidence"), "", "#### Suspected area", ", ".join(result.related_modules) or "Unknown", "", "#### Recommended investigation", redact(result.recommended_investigation), "",
+        f"### [QA][{result.suite}] {result.title}", "", "#### Classification",
+        f"- Category: {result.failure_category.value if result.failure_category else 'unclassified'}",
+        f"- Failed predicate: {redact(result.failed_predicate or 'unspecified')}",
+        f"- Retries: {result.retry_count}", "", "#### Environment", f"- Branch: {report.branch}", f"- Commit: {report.commit}", f"- Platform: {report.environment}", f"- Run type: {report.run_type}", "", "#### Severity", result.severity.value.title(), "", "#### Steps to reproduce", *(f"{i}. {redact(step)}" for i, step in enumerate(steps, 1)), "", "#### Expected", redact(result.expected), "", "#### Actual", redact(result.actual), "", "#### Named assertions", *(f"- {redact(item.name)}: {'pass' if item.passed else 'FAIL'} — {redact(item.detail)}" for item in result.assertions), "", "#### Evidence", redact("; ".join(result.evidence) or result.assertion_details or "No additional evidence"), "", "#### Suspected area", ", ".join(result.related_modules) or "Unknown", "", "#### Recommended investigation", redact(result.recommended_investigation), "",
     ))
 
 
@@ -49,7 +52,7 @@ def codex_prompt(report: RunReport) -> str:
     if not failures:
         lines.append("No failed scenarios were recorded in the latest report.")
     for item in failures:
-        lines.extend((f"## {item.title}", f"- Severity: {item.severity.value}", f"- Expected: {redact(item.expected)}", f"- Actual: {redact(item.actual)}", f"- Suspected modules: {', '.join(item.related_modules) or 'unknown'}", "- Reproduction:", *(f"  {i}. {redact(step)}" for i, step in enumerate(item.reproduction_steps or ("Run the scenario.",), 1)), ""))
+        lines.extend((f"## {item.title}", f"- Category: {item.failure_category.value if item.failure_category else 'unclassified'}", f"- Failed predicate: {redact(item.failed_predicate or 'unspecified')}", f"- Severity: {item.severity.value}", f"- Expected: {redact(item.expected)}", f"- Actual: {redact(item.actual)}", f"- Suspected modules: {', '.join(item.related_modules) or 'unknown'}", "- Reproduction:", *(f"  {i}. {redact(step)}" for i, step in enumerate(item.reproduction_steps or ("Run the scenario.",), 1)), ""))
     return redact("\n".join(lines))
 
 

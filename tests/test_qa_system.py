@@ -11,7 +11,7 @@ from unittest.mock import patch
 from unittest.mock import AsyncMock, Mock
 
 from qa_bot.config import QAConfigError, load_qa_config
-from qa_bot.models import RunReport, Scenario, ScenarioResult, Severity, Status
+from qa_bot.models import CheckResult, FailureCategory, NamedAssertion, RunReport, Scenario, ScenarioResult, Severity, Status
 from qa_bot.reporting import codex_prompt, json_report, markdown_report
 from qa_bot.scenario_runner import RunAlreadyActive, ScenarioRunner
 from qa_bot.security import is_authorized, redact
@@ -65,6 +65,31 @@ class QAAuthorizationHandlerTests(unittest.IsolatedAsyncioTestCase):
 
 
 class ScenarioRunnerTests(unittest.IsolatedAsyncioTestCase):
+    async def test_retryable_transient_pass_is_explicit(self) -> None:
+        attempts = 0
+        async def flaky():
+            nonlocal attempts
+            attempts += 1
+            return CheckResult(attempts > 1, "ok" if attempts > 1 else "delivery delayed", failure_category=None if attempts > 1 else FailureCategory.TELEGRAM_TRANSIENT, failed_predicate=None if attempts > 1 else "telegram_update_visible")
+        scenario = Scenario("retry", "retry", "smoke", "", "", flaky,
+                            retry_categories=(FailureCategory.TELEGRAM_TRANSIENT,), max_retries=1)
+        result = (await ScenarioRunner((scenario,)).run()).results[0]
+        self.assertEqual(result.status, Status.PASSED_WITH_RETRY)
+        self.assertEqual(result.retry_count, 1)
+
+    async def test_repeated_transient_fails_and_product_failure_is_not_retried(self) -> None:
+        for category, expected_attempts in ((FailureCategory.TELEGRAM_TRANSIENT, 2), (FailureCategory.PRODUCT_ASSERTION_FAILED, 1)):
+            attempts = 0
+            async def failing():
+                nonlocal attempts
+                attempts += 1
+                return CheckResult(False, "failed", failure_category=category, failed_predicate="named_predicate")
+            scenario = Scenario(category.value, category.value, "smoke", "", "", failing,
+                                retry_categories=(FailureCategory.TELEGRAM_TRANSIENT,), max_retries=1)
+            result = (await ScenarioRunner((scenario,)).run()).results[0]
+            self.assertEqual(result.status, Status.FAILED)
+            self.assertEqual(attempts, expected_attempts)
+            self.assertEqual(result.failed_predicate, "named_predicate")
     async def test_discovery_filter_and_order(self) -> None:
         runner = ScenarioRunner((Scenario("b", "B", "live", "", "", passed), Scenario("a", "A", "smoke", "", "", passed)))
         self.assertEqual([item.id for item in runner.scenarios], ["a", "b"])
@@ -103,6 +128,16 @@ class ScenarioRunnerTests(unittest.IsolatedAsyncioTestCase):
 
 
 class ReportingTests(unittest.TestCase):
+    def test_failure_category_and_predicate_are_reported(self) -> None:
+        now = datetime.now(timezone.utc)
+        result = ScenarioResult("x", "x", "smoke", now, now, 0, Status.FAILED, Severity.HIGH,
+                                "expected", "actual", failure_category=FailureCategory.TEST_STATE_INVALID,
+                                failed_predicate="active_keyboard_resolved",
+                                assertions=(NamedAssertion("active_keyboard_resolved", False, "source=none"),))
+        report = RunReport("smoke", now, now, "branch", "commit", "test", (result,))
+        rendered = markdown_report(report)
+        self.assertIn("test_state_invalid", rendered)
+        self.assertIn("active_keyboard_resolved", rendered)
     def test_markdown_json_bug_and_prompt(self) -> None:
         report = sample_report("token=supersecret")
         markdown = markdown_report(report)

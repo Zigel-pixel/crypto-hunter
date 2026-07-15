@@ -8,7 +8,7 @@ import time
 from collections.abc import Awaitable, Callable, Iterable
 from datetime import datetime, timezone
 
-from qa_bot.models import RunReport, Scenario, ScenarioResult, Severity, Status
+from qa_bot.models import CheckResult, FailureCategory, RETRYABLE_FAILURES, RunReport, Scenario, ScenarioResult, Severity, Status
 from qa_bot.security import safe_exception
 
 Progress = Callable[[int, int, ScenarioResult], Awaitable[None]]
@@ -79,6 +79,11 @@ class ScenarioRunner:
         actual = "Scenario did not complete"
         details = ""
         exception_type = error_message = None
+        category = None
+        failed_predicate = None
+        assertions = ()
+        retry_details: list[str] = []
+        retry_count = 0
         if self._cancel_event.is_set():
             status, actual = Status.CANCELLED, "QA run cancelled"
         elif scenario.requires_real_provider and not self.real_provider_checks:
@@ -95,21 +100,44 @@ class ScenarioRunner:
                 elif check_task in done:
                     cancel_task.cancel()
                     await asyncio.gather(cancel_task, return_exceptions=True)
-                    passed, actual, details = await check_task
-                    status = Status.PASSED if passed else Status.FAILED
+                    outcome = _normalize_check(await check_task)
+                    while (not outcome.passed and retry_count < scenario.max_retries
+                           and outcome.failure_category in RETRYABLE_FAILURES
+                           and outcome.failure_category in scenario.retry_categories):
+                        retry_count += 1
+                        retry_details.append(f"attempt={retry_count}; category={outcome.failure_category.value}; predicate={outcome.failed_predicate or 'unspecified'}")
+                        await asyncio.sleep(min(0.25 * (2 ** (retry_count - 1)), 1.0))
+                        outcome = _normalize_check(await scenario.check())
+                    actual, details = outcome.actual, outcome.details
+                    category, failed_predicate, assertions = outcome.failure_category, outcome.failed_predicate, outcome.assertions
+                    status = (Status.PASSED_WITH_RETRY if outcome.passed and retry_count else Status.PASSED) if outcome.passed else Status.FAILED
                 else:
                     check_task.cancel(); cancel_task.cancel()
                     await asyncio.gather(check_task, cancel_task, return_exceptions=True)
                     status, actual, exception_type = Status.ERROR, "Scenario timed out", "TimeoutError"
+                    category, failed_predicate = FailureCategory.PRODUCT_RESPONSE_TIMEOUT, "product_response_within_sla"
             except asyncio.TimeoutError:
                 status, actual, exception_type = Status.ERROR, "Scenario timed out", "TimeoutError"
+                category, failed_predicate = FailureCategory.PRODUCT_RESPONSE_TIMEOUT, "product_response_within_sla"
             except asyncio.CancelledError:
                 status, actual = Status.CANCELLED, "Scenario cancelled"
             except Exception as exc:
                 exception_type, error_message = safe_exception(exc)
                 actual = error_message
+                category, failed_predicate = FailureCategory.TEST_IMPLEMENTATION_ERROR, "scenario_check_completed"
         finished = datetime.now(timezone.utc)
-        return ScenarioResult(scenario.id, scenario.title, scenario.suite, started, finished, time.monotonic() - clock, status, scenario.severity, scenario.expected, actual, details, exception_type=exception_type, error_message=error_message, related_modules=scenario.related_modules, reproduction_steps=scenario.reproduction_steps, recommended_investigation=scenario.recommended_investigation)
+        return ScenarioResult(scenario.id, scenario.title, scenario.suite, started, finished, time.monotonic() - clock, status, scenario.severity, scenario.expected, actual, details, exception_type=exception_type, error_message=error_message, related_modules=scenario.related_modules, reproduction_steps=scenario.reproduction_steps, recommended_investigation=scenario.recommended_investigation, failure_category=category, failed_predicate=failed_predicate, assertions=assertions, retry_count=retry_count, retry_details=tuple(retry_details))
+
+
+def _normalize_check(value: tuple[bool, str, str] | CheckResult) -> CheckResult:
+    if isinstance(value, CheckResult):
+        if not value.passed and value.failure_category is None:
+            return CheckResult(False, value.actual, value.details, FailureCategory.PRODUCT_ASSERTION_FAILED, value.failed_predicate or "scenario_assertion", value.assertions)
+        return value
+    passed, actual, details = value
+    return CheckResult(passed, actual, details,
+                       None if passed else FailureCategory.PRODUCT_ASSERTION_FAILED,
+                       None if passed else "scenario_assertion")
 
 
 def _git(kind: str) -> str:

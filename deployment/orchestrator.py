@@ -17,7 +17,7 @@ class DeploymentOperations(Protocol):
 
 
 class DeploymentOrchestrator:
-    def __init__(self, operations: DeploymentOperations, *, branch: str = "feat/market-core", rollback_on_smoke: bool = True, rollback_on_full: bool = False) -> None:
+    def __init__(self, operations: DeploymentOperations, *, branch: str = "feat/market-core", rollback_on_smoke: bool = True, rollback_on_full: bool = True) -> None:
         self.operations, self.branch = operations, branch
         self.rollback_on_smoke, self.rollback_on_full = rollback_on_smoke, rollback_on_full
 
@@ -55,6 +55,7 @@ class DeploymentOrchestrator:
             if not full and self.rollback_on_full:
                 return self._rollback(report, state, old_commit, report.full_e2e)
             report.status = DeploymentStatus.DEPLOYED if smoke and full else DeploymentStatus.DEPLOYED_WITH_E2E_FAILURES
+            report.final_active_commit = remote
             state.previous_working_commit = old_commit
             state.last_successfully_deployed_commit = remote
             state.failed_commit = ""
@@ -67,17 +68,23 @@ class DeploymentOrchestrator:
         restored, summary = self.operations.rollback(old_commit)
         report.rollback = summary; report.error = reason
         report.status = DeploymentStatus.ROLLED_BACK if restored else DeploymentStatus.ROLLBACK_FAILED
+        report.final_active_commit = old_commit if restored else "unknown"
+        report.blocking_predicate = "rollback_health_verified" if not restored else "deployment_stage_passed"
         if not restored: state.failure_count += 1
         state.failed_commit = report.new_commit
         return self._finish(report, state)
 
     def _blocked(self, report: DeploymentReport, reason: str, state: DeploymentState | None = None) -> DeploymentReport:
         report.status = DeploymentStatus.BLOCKED; report.error = reason
+        report.final_active_commit = report.old_commit
+        report.blocking_predicate = "pre_activation_validation_passed"
         return self._finish(report, state)
 
     @staticmethod
     def _finish(report: DeploymentReport, state: DeploymentState | None) -> DeploymentReport:
         report.finished_at = datetime.now(timezone.utc)
+        if not report.final_active_commit and report.status is DeploymentStatus.NO_UPDATE:
+            report.final_active_commit = report.old_commit
         if state is not None:
             state.last_deployment_timestamp = report.finished_at.isoformat()
             state.last_deployment_status = report.status.value

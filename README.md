@@ -1,5 +1,37 @@
 # Crypto Hunter
 
+## QA and deployment reliability
+
+QA results use explicit failure categories: product assertion, product timeout,
+infrastructure readiness, Telegram transient, invalid test state,
+configuration, external provider, deployment health, and test implementation.
+Failures record the exact named predicate. A scenario may opt into at most a
+small bounded retry for declared transient categories; recovery is reported as
+`passed_with_retry`. Product assertions and configuration errors are never
+automatically retried.
+
+Scenario lifecycle is preflight/readiness, deterministic setup, fresh evidence
+boundary, product action and SLA collection, named assertions, cleanup, then
+reporting. Individual Telegram suites issue their own `/start` and do not rely
+on smoke order. Local mocked validation uses `python -m pytest -q`; registered
+real suites can be inspected with `python -m qa_e2e list` and, only in an
+authorized non-production environment, run with `python -m qa_e2e run <suite>`.
+
+Deployment is blocking-by-default during beta. Candidate verification, process
+health, smoke, and full E2E must pass. A post-activation failure restores the
+last known-good source and Python pointer, restarts it, and requires verified
+rollback health. `passed_with_retry` is distinct from `passed`; `failed` means
+a product predicate failed, `error` means the check could not execute,
+`skipped` means a documented gate prevented execution, and nonzero CLI exit
+codes mean the deployment must not be accepted.
+
+Emergency rollback remains a supervised operation: disable Auto Deploy, use
+the documented generated rollback/status scripts for the verified production
+directory, confirm the previous commit and active Python pointer, start exactly
+one path-scoped bot tree, and verify health before re-enabling Auto Deploy.
+Never enable Auto Deploy merely because files were copied; first complete one
+supervised deployment with smoke and full E2E green.
+
 ## Ethereum and Tron wallets
 
 Wallet monitoring is read-only: the bot accepts public addresses only and

@@ -77,6 +77,9 @@ class DeploymentReport:
     full_e2e: str = "not_run"
     rollback: str = "not_required"
     error: str = ""
+    final_active_commit: str = ""
+    blocking_predicate: str = ""
+    retry_count: int = 0
 
 
 @dataclass

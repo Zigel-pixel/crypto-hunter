@@ -100,11 +100,16 @@ class DeploymentOrchestratorTests(unittest.TestCase):
             self.assertEqual(report.status, DeploymentStatus.ROLLED_BACK)
             self.assertIn("rollback", operations.calls)
 
-    def test_full_e2e_failure_keeps_deployment_by_default(self):
+    def test_full_e2e_failure_rolls_back_by_default(self):
         operations = FakeOperations(); operations.e2e["all"] = (False, "provider unavailable")
         report = DeploymentOrchestrator(operations).run(DeploymentState())
+        self.assertEqual(report.status, DeploymentStatus.ROLLED_BACK)
+        self.assertIn("rollback", operations.calls)
+
+    def test_nonblocking_full_e2e_requires_explicit_override(self):
+        operations = FakeOperations(); operations.e2e["all"] = (False, "provider unavailable")
+        report = DeploymentOrchestrator(operations, rollback_on_full=False).run(DeploymentState())
         self.assertEqual(report.status, DeploymentStatus.DEPLOYED_WITH_E2E_FAILURES)
-        self.assertNotIn("rollback", operations.calls)
 
     def test_rollback_failure_is_critical(self):
         operations = FakeOperations(); operations.health = (False, "failed"); operations.rollback_result = (False, "rollback unhealthy")

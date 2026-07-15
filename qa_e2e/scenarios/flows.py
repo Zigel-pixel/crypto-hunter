@@ -4,7 +4,7 @@ import asyncio
 import re
 from collections.abc import Awaitable, Callable
 
-from qa_bot.models import Scenario, Severity
+from qa_bot.models import CheckResult, FailureCategory, NamedAssertion, Scenario, Severity
 from qa_e2e.client import TelegramE2EClient
 from qa_e2e.config import E2EConfig
 from qa_e2e.evidence import contains_raw_error
@@ -42,10 +42,19 @@ def build_scenarios(client: TelegramE2EClient, config: E2EConfig) -> tuple[Scena
     async def smoke_start():
         result = await client.send("/start")
         latest = _latest_reply_keyboard(result, ("📈 Rates", "📈 Курси"))
-        ok = (latest is not None and bool(latest.reply_buttons) and not latest.inline_buttons
-              and not contains_raw_error(latest.text)
-              and (result.first_response_seconds or 999) <= config.default_timeout)
-        return ok, f"messages={len(result.messages)}, first={result.first_response_seconds}, reply={latest.reply_buttons if latest else ()}, inline={latest.inline_buttons if latest else ()}", _evidence(result)
+        assertions = (
+            NamedAssertion("bot_response_received", bool(result.messages), f"messages={len(result.messages)}"),
+            NamedAssertion("reply_markup_type_is_reply_keyboard", latest is not None),
+            NamedAssertion("reply_keyboard_non_empty", bool(latest and latest.reply_buttons)),
+            NamedAssertion("known_safe_main_action_present", bool(latest and set(latest.reply_buttons) & {"📈 Rates", "📈 Курси"})),
+            NamedAssertion("no_inline_cross_classification", bool(latest is not None and not latest.inline_buttons)),
+            NamedAssertion("no_raw_error_leakage", bool(latest is not None and not contains_raw_error(latest.text))),
+            NamedAssertion("response_within_product_sla", (result.first_response_seconds or 999) <= config.default_timeout, f"first={result.first_response_seconds}"),
+        )
+        failed = next((item.name for item in assertions if not item.passed), None)
+        actual = f"messages={len(result.messages)}, first={result.first_response_seconds}, reply={latest.reply_buttons if latest else ()}, inline={latest.inline_buttons if latest else ()}"
+        category = FailureCategory.PRODUCT_RESPONSE_TIMEOUT if failed == "response_within_product_sla" else FailureCategory.PRODUCT_ASSERTION_FAILED
+        return CheckResult(failed is None, actual, _evidence(result), category if failed else None, failed, assertions)
 
     async def smoke_sessions():
         parts = []

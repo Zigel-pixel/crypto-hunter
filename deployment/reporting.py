@@ -37,7 +37,7 @@ class DeploymentReportStorage:
 def markdown_report(report: DeploymentReport) -> str:
     finished = report.finished_at or report.started_at
     duration = (finished - report.started_at).total_seconds()
-    lines = ["# Crypto Hunter Deployment Report", "", f"- Branch: {redact(report.branch)}", f"- Old commit: {redact(report.old_commit)}", f"- New commit: {redact(report.new_commit)}", f"- Status: {report.status.value}", f"- Started: {report.started_at.isoformat()}", f"- Finished: {finished.isoformat()}", f"- Duration: {duration:.2f}s", "", "## Stages", "", "| Stage | Result | Summary | Duration |", "| --- | --- | --- | ---: |"]
+    lines = ["# Crypto Hunter Deployment Report", "", f"- Branch: {redact(report.branch)}", f"- Old commit: {redact(report.old_commit)}", f"- Attempted commit: {redact(report.new_commit)}", f"- Final active commit: {redact(report.final_active_commit or 'unknown')}", f"- Status: {report.status.value}", f"- Blocking predicate: {redact(report.blocking_predicate or 'none')}", f"- Retries: {report.retry_count}", f"- Started: {report.started_at.isoformat()}", f"- Finished: {finished.isoformat()}", f"- Duration: {duration:.2f}s", "", "## Stages", "", "| Stage | Result | Summary | Duration |", "| --- | --- | --- | ---: |"]
     lines.extend(f"| {redact(stage.name)} | {'passed' if stage.passed else 'failed'} | {redact(stage.summary)} | {stage.duration_seconds:.2f}s |" for stage in report.stages)
     lines.extend(["", "## Post-deployment", "", f"- Health: {report.health.status.value if report.health else 'not_run'}", f"- Smoke E2E: {redact(report.smoke_e2e)}", f"- Full E2E: {redact(report.full_e2e)}", f"- Rollback: {redact(report.rollback)}"])
     if report.error:
