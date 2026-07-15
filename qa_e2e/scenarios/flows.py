@@ -26,6 +26,14 @@ def _latest_reply_keyboard(result, expected_actions: tuple[str, ...]):
     return None
 
 
+async def _start_and_open(client: TelegramE2EClient, candidates: tuple[str, ...]):
+    """Make every feature suite independent of smoke and prior keyboard state."""
+    started = await client.send("/start")
+    if _latest(started) is None:
+        raise RuntimeError("No /start response")
+    return await client.send_recent_reply_action(candidates)
+
+
 def _scenario(client: TelegramE2EClient, config: E2EConfig, scenario_id: str, title: str, suite: str, expected: str, action: Callable[[], Awaitable[tuple[bool, str, str]]], *, severity: Severity = Severity.HIGH) -> Scenario:
     return Scenario(scenario_id, title, suite, "Real Telegram interaction with the configured target bot.", expected, action, severity, timeout=config.max_scenario_seconds, tags=("telegram-e2e",), related_modules=("app/handlers", "app/keyboards"), reproduction_steps=(f"Run python -m qa_e2e run {suite}", f"Observe scenario {scenario_id}"))
 
@@ -63,10 +71,7 @@ def build_scenarios(client: TelegramE2EClient, config: E2EConfig) -> tuple[Scena
         return ok, f"Ukrainian main labels: {labels}", _evidence(selected)
 
     async def live():
-        start = await client.send("/start")
-        message = _latest(start)
-        if message is None: return False, "No main menu", _evidence(start)
-        rates = await client.send_reply_button(_raw_message_placeholder(message), ("📈 Курси", "📈 Rates"))
+        rates = await _start_and_open(client, ("📈 Курси", "📈 Rates"))
         chart = await client.click_recent_inline(callback_prefix="rates:live:start", timeout=config.long_timeout)
         media = [item for item in chart.messages if item.media_type]
         labels = tuple(label for item in chart.messages for label in item.inline_buttons)
@@ -77,9 +82,7 @@ def build_scenarios(client: TelegramE2EClient, config: E2EConfig) -> tuple[Scena
         return ok, f"messages={len(chart.messages)}, media={len(media)}, timeframes={labels}, old_mode={old_mode}", _evidence(chart)
 
     async def favorites():
-        start = await client.send("/start"); message = _latest(start)
-        if message is None: return False, "No main menu", _evidence(start)
-        opened = await client.send_reply_button(_raw_message_placeholder(message), ("⭐ Обране", "⭐ Watchlist"))
+        opened = await _start_and_open(client, ("⭐ Обране", "⭐ Watchlist", "⭐ Favorites"))
         raw = client.last_raw_messages[-1] if client.last_raw_messages else None
         if raw is None: return False, "Watchlist message unavailable", _evidence(opened)
         add = await client.click_inline(raw, callback_prefix="watchlist:add")
@@ -93,12 +96,10 @@ def build_scenarios(client: TelegramE2EClient, config: E2EConfig) -> tuple[Scena
         return False, "Alert creation E2E requires a dedicated clean account and remains conservative", "Enable only after reviewing existing account alerts"
 
     async def ai():
-        start = await client.send("/start"); message = _latest(start)
-        if message is None: return False, "No main menu", _evidence(start)
-        opened = await client.send_reply_button(_raw_message_placeholder(message), ("🤖 AI Консультант", "🤖 AI Consultant"))
+        opened = await _start_and_open(client, ("🤖 AI Консультант", "🤖 AI Consultant"))
         current = _latest(opened)
         if current is None: return False, "AI menu unavailable", _evidence(opened)
-        await client.send_reply_button(_raw_message_placeholder(current), ("💬 Запитати консультанта", "💬 Ask Consultant"))
+        await client.send_recent_reply_action(("💬 Запитати консультанта", "💬 Ask Consultant"))
         response = await client.send("Що ти скажеш про стейблкоїни?", timeout=config.long_timeout)
         text = "\n".join(item.text for item in response.messages)
         topic = all(token in text for token in ("USDT", "USDC", "DAI"))
@@ -108,12 +109,10 @@ def build_scenarios(client: TelegramE2EClient, config: E2EConfig) -> tuple[Scena
         return ok, f"stablecoins={topic}, risk={risk}, legacy_dump={legacy_dump}, messages={len(response.messages)}", _evidence(response)
 
     async def wallets():
-        start = await client.send("/start"); message = _latest(start)
-        if message is None: return False, "No main menu", _evidence(start)
-        opened = await client.send_reply_button(_raw_message_placeholder(message), ("👛 Гаманці", "👛 Wallets"))
+        opened = await _start_and_open(client, ("👛 Гаманці", "👛 Wallets"))
         current = _latest(opened)
         if current is None: return False, "Wallet menu unavailable", _evidence(opened)
-        warning = await client.send_reply_button(_raw_message_placeholder(current), ("➕ Додати гаманець", "➕ Add wallet"))
+        warning = await client.send_recent_reply_action(("➕ Додати гаманець", "➕ Add wallet"))
         warning_text = "\n".join(item.text for item in warning.messages).casefold()
         security_ok = any(term in warning_text for term in ("seed", "приватн", "private key"))
         invalid = await client.send("not-a-wallet")
@@ -133,11 +132,9 @@ def build_scenarios(client: TelegramE2EClient, config: E2EConfig) -> tuple[Scena
             return False, "Ethereum confirmation controls missing", _evidence(response)
         cancelled = await client.click_inline(raw, callback_prefix="wallet:cancel")
         cancel_ok = bool(cancelled.messages)
-        restarted = await client.send("/start")
-        main = _latest(restarted)
-        wallets_menu = await client.send_reply_button(_raw_message_placeholder(main), ("👛 Гаманці", "👛 Wallets")) if main else None
+        wallets_menu = await _start_and_open(client, ("👛 Гаманці", "👛 Wallets"))
         wallet_menu = _latest(wallets_menu) if wallets_menu else None
-        add_again = await client.send_reply_button(_raw_message_placeholder(wallet_menu), ("➕ Додати гаманець", "➕ Add wallet")) if wallet_menu else None
+        add_again = await client.send_recent_reply_action(("➕ Додати гаманець", "➕ Add wallet")) if wallet_menu else None
         tron_ok = False
         if add_again is not None:
             tron = await client.send(PUBLIC_TRON_TEST_ADDRESS, timeout=config.long_timeout)

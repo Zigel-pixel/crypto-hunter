@@ -23,3 +23,14 @@ class ActionResult:
     messages: tuple[MessageEvidence, ...]
     first_response_seconds: float | None
     total_seconds: float
+
+
+@dataclass(frozen=True)
+class ActiveReplyKeyboard:
+    rows: tuple[tuple[str, ...], ...]
+    source_message_id: int
+    source_timestamp: datetime | None
+
+    @property
+    def labels(self) -> tuple[str, ...]:
+        return tuple(label for row in self.rows for label in row)

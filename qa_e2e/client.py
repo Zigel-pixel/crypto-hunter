@@ -7,8 +7,8 @@ from typing import Any
 
 from qa_e2e.config import E2EConfig
 from qa_e2e.evidence import sanitize_text
-from qa_e2e.models import ActionResult, MessageEvidence
-from qa_e2e.selectors import button_labels, ensure_safe_button, find_inline_button, reply_keyboard_labels, select_reply_label
+from qa_e2e.models import ActionResult, ActiveReplyKeyboard, MessageEvidence
+from qa_e2e.selectors import button_labels, ensure_safe_button, find_inline_button, hides_reply_keyboard, normalize_label, reply_keyboard_labels, reply_keyboard_rows, select_reply_label
 
 
 class E2EClientError(RuntimeError):
@@ -31,6 +31,7 @@ class TelegramE2EClient:
         self.client = client or create_telethon_client(config)
         self.target: Any | None = None
         self.last_raw_messages: tuple[Any, ...] = ()
+        self._reply_keyboards: dict[str, ActiveReplyKeyboard] = {}
 
     async def connect(self) -> None:
         await self.client.connect()
@@ -43,6 +44,7 @@ class TelegramE2EClient:
         if username != self.config.target_username.casefold():
             raise TargetNotBot("Resolved target does not match configured bot")
         self.target = entity
+        await self._refresh_reply_keyboard_state()
 
     async def disconnect(self) -> None:
         await self.client.disconnect()
@@ -73,14 +75,15 @@ class TelegramE2EClient:
         return await self.send(select_reply_label(message, candidates), timeout=timeout)
 
     async def send_recent_reply_action(self, candidates: tuple[str, ...], *, timeout: int | None = None) -> ActionResult:
-        """Use the newest fresh message that actually owns the reply action."""
-        for message in reversed(self.last_raw_messages):
-            try:
-                label = select_reply_label(message, candidates)
-            except LookupError:
-                continue
-            return await self.send(label, timeout=timeout)
-        raise LookupError("Requested reply-keyboard action is unavailable in fresh messages")
+        """Send a safe action from Telegram's target-scoped persistent keyboard."""
+        state = self.active_reply_keyboard
+        available = {normalize_label(label): label for label in state.labels} if state else {}
+        for candidate in candidates:
+            if normalize_label(candidate) in available:
+                return await self.send(available[normalize_label(candidate)], timeout=timeout)
+        safe_labels = tuple(sanitize_text(label) for label in state.labels) if state else ()
+        detail = "none" if state is None else f"source_message={state.source_message_id}, labels={safe_labels}"
+        raise LookupError(f"Requested reply-keyboard action is unavailable; active_keyboard={detail}")
 
     async def click_inline(self, message: Any, *, text: str | None = None, callback_prefix: str | None = None, timeout: int | None = None) -> ActionResult:
         self._require_target()
@@ -116,6 +119,7 @@ class TelegramE2EClient:
                 if message_id < baseline or (message_id == baseline and not include_baseline):
                     continue
                 evidence = self._evidence(message, now - started, edited=bool(getattr(message, "edit_date", None)))
+                self._process_reply_keyboard(message)
                 raw_seen[message_id] = message
                 key = (message_id, evidence.text, evidence.media_type, evidence.inline_buttons)
                 if key not in seen:
@@ -137,3 +141,30 @@ class TelegramE2EClient:
     def _require_target(self) -> None:
         if self.target is None:
             raise E2EClientError("Target bot has not been resolved")
+
+    @property
+    def active_reply_keyboard(self) -> ActiveReplyKeyboard | None:
+        return self._reply_keyboards.get(self._target_key()) if self.target is not None else None
+
+    def _target_key(self) -> str:
+        value = getattr(self.target, "id", None) or getattr(self.target, "username", None)
+        return str(value)
+
+    def _process_reply_keyboard(self, message: Any) -> None:
+        if getattr(message, "out", False):
+            return
+        key = self._target_key()
+        rows = reply_keyboard_rows(message)
+        if rows:
+            self._reply_keyboards[key] = ActiveReplyKeyboard(
+                rows, int(getattr(message, "id", 0)), getattr(message, "date", None)
+            )
+        elif hides_reply_keyboard(message):
+            self._reply_keyboards.pop(key, None)
+
+    async def _refresh_reply_keyboard_state(self) -> None:
+        """Rebuild state from bounded recent history for this target only."""
+        messages = await self.client.get_messages(self.target, limit=50)
+        self._reply_keyboards.pop(self._target_key(), None)
+        for message in reversed(tuple(messages or ())):
+            self._process_reply_keyboard(message)

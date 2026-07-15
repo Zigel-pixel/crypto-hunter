@@ -496,6 +496,18 @@ E2E coverage remained for the follow-up completion commit below.
   reply keyboard containing a known main-menu action, and also requires that
   the same message has no inline classification.
 
+## Persistent Telegram reply-keyboard state (2026-07-15)
+
+- Reply keyboards are Telegram client state, not message-scoped controls. The
+  E2E client now stores the active keyboard per resolved target conversation,
+  including row order, source message ID, and timestamp.
+- A newer `ReplyKeyboardMarkup` replaces state; `ReplyKeyboardHide` clears it.
+  Plain messages, inline keyboards, force reply, and outgoing user messages do
+  not alter it. Bounded recent bot history initializes state on connection.
+- AI, Watchlist, Live, and Wallet suites each run `/start` before resolving a
+  localized main-menu action, so every suite is independently runnable without
+  relying on smoke order. Missing actions report redacted source/state evidence.
+
 Real Telegram E2E runs showed that direct handler/service tests were not sufficient to prove which aiogram route owned AI questions, Watchlist Add, and Live callbacks. Production dispatcher construction now lives in `app/dispatcher.py`, and the verified routes are registered before their broader feature routers.
 
 - Consultant questions in `ConsultantStates.entering_question` are owned by the dedicated `consultant_question` router and call `answer_consultant_question`. Market Analysis remains a separate explicit button and no longer shares ownership of question messages.

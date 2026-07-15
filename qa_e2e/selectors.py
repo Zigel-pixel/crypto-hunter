@@ -45,16 +45,21 @@ def ensure_safe_button(button: Any) -> None:
 
 
 def reply_keyboard_labels(message: Any) -> tuple[str, ...]:
+    return tuple(label for row in reply_keyboard_rows(message) for label in row)
+
+
+def reply_keyboard_rows(message: Any) -> tuple[tuple[str, ...], ...]:
     markup = getattr(message, "reply_markup", None)
     if not isinstance(markup, tl_types.ReplyKeyboardMarkup):
         return ()
-    rows = getattr(markup, "rows", None) or ()
-    labels: list[str] = []
-    for row in rows:
-        for button in getattr(row, "buttons", ()):
-            text = getattr(button, "text", None)
-            if text: labels.append(str(text))
-    return tuple(labels)
+    return tuple(
+        tuple(str(button.text) for button in getattr(row, "buttons", ()) if getattr(button, "text", None))
+        for row in getattr(markup, "rows", ())
+    )
+
+
+def hides_reply_keyboard(message: Any) -> bool:
+    return isinstance(getattr(message, "reply_markup", None), tl_types.ReplyKeyboardHide)
 
 
 def _is_markup(message: Any, markup_type: type[Any]) -> bool:
